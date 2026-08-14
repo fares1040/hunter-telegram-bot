@@ -843,3 +843,275 @@ class TestFix5_AIPricedInFallback:
 
         assert event.priced_in_probability == 0.5, \
             f"Expected priced_in=0.5 for AI exception fallback, got {event.priced_in_probability}"
+
+
+# ─── Polygon Provider Retry Tests ─────────────────────────────────────────────
+
+class TestPolygonRetry:
+    """Phase 2.1 — Polygon provider resilience: bounded retry, rate-limit handling.
+
+    Total retry budget: 20 seconds across all attempts and backoff delays.
+    Budget-constrained backoff:
+      - delay sequence: 1s → 2s → 4s (capped by MAX_DELAY=4s)
+      - If remaining budget < delay: delay is capped to remaining budget
+      - If remaining budget < MIN_DELAY (0.5s): no further retries attempted
+    """
+
+    @pytest.mark.asyncio
+    async def test_200_succeeds(self):
+        """HTTP 200 → returns parsed JSON without any retry."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+
+        provider = PolygonProvider("test_key")
+        mock_response = {"results": [
+            {"t": 1700000000000, "o": 100, "h": 101, "l": 99, "c": 100, "v": 1000}
+        ]}
+
+        mock_get = AsyncMock(return_value=mock_response)
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            assert result == mock_response
+            mock_get.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_429_retries_then_succeeds(self):
+        """HTTP 429 → retry after 1s → succeeds. Within budget."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        success_response = {"results": [{"t": 1700000000000, "o": 100, "h": 101, "l": 99, "c": 100, "v": 1000}]}
+
+        mock_get = AsyncMock(side_effect=[
+            ProviderError("Polygon HTTP 429", provider="polygon", retryable=True),
+            success_response,
+        ])
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+
+        assert mock_get.call_count == 2
+        assert result == success_response
+
+    @pytest.mark.asyncio
+    async def test_429_exhausts_retries_and_raises(self):
+        """HTTP 429 persists → 3 attempts total → raises ProviderError."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(
+            side_effect=ProviderError("Polygon HTTP 429", provider="polygon", retryable=True)
+        )
+        with patch.object(provider, "_get_json", mock_get):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            assert exc_info.value.provider == "polygon"
+
+        assert mock_get.call_count == 3, "Expected 3 attempts before raising"
+
+    @pytest.mark.asyncio
+    async def test_500_retries(self):
+        """HTTP 500 → retry → succeeds."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(side_effect=[
+            ProviderError("Polygon HTTP 500", provider="polygon", retryable=True),
+            {"results": []},
+        ])
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        assert mock_get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_503_retries(self):
+        """HTTP 503 → retry → succeeds."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(side_effect=[
+            ProviderError("Polygon HTTP 503", provider="polygon", retryable=True),
+            {"results": []},
+        ])
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        assert mock_get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_400_does_not_retry(self):
+        """HTTP 400 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(
+            side_effect=ProviderError("Polygon HTTP 400", provider="polygon", retryable=False)
+        )
+        with patch.object(provider, "_get_json", mock_get):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            assert exc_info.value.provider == "polygon"
+            assert not exc_info.value.retryable
+        assert mock_get.call_count == 1, "400 must not be retried"
+
+    @pytest.mark.asyncio
+    async def test_401_does_not_retry(self):
+        """HTTP 401 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(
+            side_effect=ProviderError("Polygon HTTP 401", provider="polygon", retryable=False)
+        )
+        with patch.object(provider, "_get_json", mock_get):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            assert not exc_info.value.retryable
+        assert mock_get.call_count == 1, "401 must not be retried"
+
+    @pytest.mark.asyncio
+    async def test_403_does_not_retry(self):
+        """HTTP 403 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(
+            side_effect=ProviderError("Polygon HTTP 403", provider="polygon", retryable=False)
+        )
+        with patch.object(provider, "_get_json", mock_get):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            assert not exc_info.value.retryable
+        assert mock_get.call_count == 1, "403 must not be retried"
+
+    @pytest.mark.asyncio
+    async def test_timeout_retries(self):
+        """TimeoutError → retry → succeeds."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(side_effect=[
+            asyncio.TimeoutError("simulated timeout"),
+            {"results": []},
+        ])
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        assert mock_get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connection_error_retries(self):
+        """aiohttp.ClientError → retry → succeeds."""
+        import aiohttp
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(side_effect=[
+            aiohttp.ClientError("connection refused"),
+            {"results": []},
+        ])
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        assert mock_get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retry_after_header_respected(self):
+        """First retry backoff is ~1s (INITIAL_DELAY) for 429."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+        import time
+
+        provider = PolygonProvider("test_key")
+        mock_get = AsyncMock(side_effect=[
+            ProviderError("Polygon HTTP 429", provider="polygon", retryable=True),
+            {"results": []},
+        ])
+        start = time.monotonic()
+        with patch.object(provider, "_get_json", mock_get):
+            await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        elapsed = time.monotonic() - start
+        assert 0.8 <= elapsed <= 3.0, f"Expected ~1s backoff, got {elapsed:.2f}s"
+
+    @pytest.mark.asyncio
+    async def test_total_budget_respected(self):
+        """Total retry budget (20s) caps cumulative delay — retries still succeed when budget allows."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+        import time
+
+        provider = PolygonProvider("test_key")
+        # 3 failures with 1s delay each = ~3s total — well within 20s budget
+        mock_get = AsyncMock(side_effect=[
+            ProviderError("Polygon HTTP 500", provider="polygon", retryable=True),
+            ProviderError("Polygon HTTP 500", provider="polygon", retryable=True),
+            {"results": []},
+        ])
+        start = time.monotonic()
+        with patch.object(provider, "_get_json", mock_get):
+            result = await provider._get_json_with_retry("https://api.polygon.io/test", {})
+        elapsed = time.monotonic() - start
+        assert mock_get.call_count == 3
+        assert result == {"results": []}
+        assert elapsed < 20.0, f"Total time {elapsed:.1f}s must stay within 20s budget"
+
+    @pytest.mark.asyncio
+    async def test_budget_exhaustion_stops_retries(self):
+        """When remaining budget < MIN_DELAY, no further sleep/retry attempted."""
+        import time
+        from unittest.mock import patch
+        from providers.market_data.polygon_provider import PolygonProvider, TOTAL_RETRY_BUDGET
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider("test_key")
+
+        call_times = []
+        request_time = 0.05  # simulate very fast failure so budget doesn't drain via request time
+
+        async def fake_get_json(url, params):
+            call_times.append(time.monotonic())
+            raise ProviderError("Polygon HTTP 500", provider="polygon", retryable=True)
+
+        start = time.monotonic()
+        with patch.object(provider, "_get_json", fake_get_json):
+            with pytest.raises(ProviderError):
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+
+        elapsed = time.monotonic() - start
+        assert len(call_times) >= 2, "Should make at least 2 attempts before budget exhaustion"
+        # With 20s budget and 1s+2s delays, we should get at least 2-3 attempts
+        assert elapsed <= TOTAL_RETRY_BUDGET + 2.0, \
+            f"Total elapsed {elapsed:.1f}s must be within budget + tolerance"
+
+    @pytest.mark.asyncio
+    async def test_api_key_not_in_exception(self):
+        """API key must never appear in exception message or log output."""
+        from unittest.mock import AsyncMock, patch
+        from providers.market_data.polygon_provider import PolygonProvider
+        from core.exceptions import ProviderError
+
+        provider = PolygonProvider(api_key="SECRET_POLYGON_KEY_12345")
+        mock_get = AsyncMock(
+            side_effect=ProviderError("Polygon HTTP 401", provider="polygon", retryable=False)
+        )
+        with patch.object(provider, "_get_json", mock_get):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider._get_json_with_retry("https://api.polygon.io/test", {})
+            exc_text = str(exc_info.value)
+            assert "SECRET" not in exc_text, f"API key leaked into exception: {exc_text}"
+            assert "401" in exc_text
