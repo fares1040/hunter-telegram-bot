@@ -34,6 +34,8 @@ class DecisionEngine:
         signal.news_impact = event.impact_score
         signal.market_reaction = reaction.reaction_score
         signal.liquidity_proxy = liquidity.score
+        signal.reaction_status = reaction.reaction_label
+        signal.liquidity_status = liquidity.status
         signal.technical_structure = technical.setup_score
         signal.options_flow = options.flow_score
         signal.options_bias = options.bias

@@ -21,6 +21,7 @@ class AIAnalyzer:
             event.impact_score = 50
             event.materiality_score = 50
             event.sentiment = "NEUTRAL"
+            event.priced_in_probability = 0.5
             return event
 
         sources_text = "\n\n".join([
@@ -88,6 +89,7 @@ Respond with valid JSON only:
             event.impact_score = 50
             event.materiality_score = 40
             event.sentiment = "NEUTRAL"
+            event.priced_in_probability = 0.5
 
         return event
 

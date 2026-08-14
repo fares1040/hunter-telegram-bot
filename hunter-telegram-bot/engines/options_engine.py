@@ -51,8 +51,8 @@ class OptionsEngine:
             if m is None:
                 continue
             # Prefer slightly OTM, liquid contracts with sensible DTE and lower spread.
-            target_m=-5.0 if bullish else 5.0  # put moneyness negative means OTM for puts? use absolute distance below
-            distance=abs(m-5.0) if bullish else abs(m+5.0)
+            target_m=-5.0 if bullish else 5.0
+            distance=abs(m-target_m)
             dte_penalty=abs(dte-35)/35
             spread_penalty=(spread or 0)/15
             iv_penalty=max(0.0, (c.implied_volatility or 0)-1.0)

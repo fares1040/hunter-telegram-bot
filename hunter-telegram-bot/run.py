@@ -73,7 +73,7 @@ class HunterOrchestrator:
         confidence = self._build_confidence(data, event, technical, options)
         signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context)
         key = f"{ticker}:{event.event_id}"
-        if signal.decision != HunterDecision.IGNORE and not self.memory.seen(key):
+        if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
             try: await self.notifier.send_signal(signal)
             except Exception as e: LOGGER.error(f"[Pipeline] Telegram failed: {e}")

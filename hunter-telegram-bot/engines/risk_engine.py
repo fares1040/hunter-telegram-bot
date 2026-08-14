@@ -37,6 +37,10 @@ class RiskEngine:
             plan.position_size = max(0, int(max_loss / risk))
         plan.confidence = 75 if technical.recent_swing_low or technical.premarket_low else 55
         plan.valid = plan.confidence >= 55
-        if plan.reward_to_risk_1 < 1.5:
-            plan.warnings.append("Low reward-to-risk")
+        # Compute actual R:R from plan values and validate against minimum threshold.
+        MIN_RR = 1.5
+        if plan.entry_trigger is not None and plan.stop_price is not None and plan.target_1 is not None:
+            actual_rr = (plan.target_1 - plan.entry_trigger) / max(1e-9, plan.entry_trigger - plan.stop_price)
+            if actual_rr < MIN_RR:
+                plan.warnings.append("Low reward-to-risk")
         return plan
