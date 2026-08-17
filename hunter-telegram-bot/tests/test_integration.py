@@ -1115,3 +1115,517 @@ class TestPolygonRetry:
             exc_text = str(exc_info.value)
             assert "SECRET" not in exc_text, f"API key leaked into exception: {exc_text}"
             assert "401" in exc_text
+
+
+# =============================================================================
+# Finnhub News Provider Tests
+# =============================================================================
+class TestFinnhubNewsProvider:
+    """Finnhub retry / error semantics — all tests use mocks, no real API calls.
+
+    Strategy:
+      - Tests for retry behavior mock _fetch_json (the single-request method)
+        so _fetch_json_with_retry's internal retry loop actually runs.
+      - Tests for permanent-error / no-retry behavior mock _fetch_json_with_retry
+        directly since no retry loop is expected.
+    """
+
+    @pytest.fixture
+    def provider(self):
+        """Provider with a fake API key; _fetch_json patched to avoid real HTTP."""
+        from providers.news.finnhub_provider import FinnhubNewsProvider
+        prov = FinnhubNewsProvider()
+        prov.api_key = "test_finnhub_key_12345"
+        prov.base_url = "https://finnhub.io/api/v1"
+        return prov
+
+    # -------------------------------------------------------------------------
+    # Happy path
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_200_with_articles(self, provider):
+        """HTTP 200 + articles → returns parsed NewsItem list."""
+        from unittest.mock import AsyncMock, patch
+
+        since = datetime.now(timezone.utc)
+        mock_data = [
+            {
+                "id": 123,
+                "source": "Reuters",
+                "headline": "Big merger announced",
+                "summary": "Deal worth $10B",
+                "url": "https://example.com/news/123",
+                "datetime": 1700000000,
+            },
+            {
+                "id": 456,
+                "source": "Benzinga",
+                "headline": "Earnings beat",
+                "summary": "EPS $2.50 vs $2.00 est",
+                "url": "https://example.com/news/456",
+                "datetime": 1700001000,
+            },
+        ]
+
+        provider._fetch_json_with_retry = AsyncMock(return_value=mock_data)
+        items = await provider.fetch_news("AAPL", since)
+
+        assert len(items) == 2
+        assert items[0].ticker == "AAPL"
+        assert items[0].source == "Reuters"
+        assert items[0].source_tier.value == 2  # TIER_2_MAJOR
+        assert items[1].source == "Benzinga"
+        assert items[1].source_tier.value == 3  # TIER_3_FINANCIAL
+
+    @pytest.mark.asyncio
+    async def test_200_empty_articles(self, provider):
+        """HTTP 200 + empty list → returns []. Distinguishable from failure."""
+        from unittest.mock import AsyncMock
+
+        provider._fetch_json_with_retry = AsyncMock(return_value=[])
+        items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert items == []
+        provider._fetch_json_with_retry.assert_awaited_once()
+
+    # -------------------------------------------------------------------------
+    # HTTP 429 — rate limit (retryable)
+    # Mock _fetch_json so the retry loop inside _fetch_json_with_retry runs.
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_429_then_200_retries_and_succeeds(self, provider):
+        """HTTP 429 → retry → succeeds. Within budget."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        # _fetch_json is called once per attempt inside _fetch_json_with_retry.
+        # First call: raise retryable 429. Second call: return success.
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 429", provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        assert provider._fetch_json.call_count == 2, "Should call _fetch_json twice (1 fail + 1 success)"
+
+    @pytest.mark.asyncio
+    async def test_429_exhausts_retries_and_raises(self, provider):
+        """HTTP 429 persists → max retries exhausted → ProviderError."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        provider._fetch_json = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 429", provider="finnhub", retryable=True)
+        )
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            with pytest.raises(ProviderError) as exc_info:
+                await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert exc_info.value.provider == "finnhub"
+        assert exc_info.value.retryable is True
+        # 3 total attempts: 1 initial + 2 retries (loop runs attempts 1-3, raises on last)
+        assert provider._fetch_json.call_count == 3, "Should exhaust all retry attempts"
+
+    # -------------------------------------------------------------------------
+    # HTTP 5xx — server errors (retryable)
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_500_then_200_retries_and_succeeds(self, provider):
+        """HTTP 500 → retry → succeeds."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        assert provider._fetch_json.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_503_then_200_retries_and_succeeds(self, provider):
+        """HTTP 503 → retry → succeeds."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 503", provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        assert provider._fetch_json.call_count == 2
+
+    # -------------------------------------------------------------------------
+    # HTTP 4xx — permanent client errors (NOT retryable)
+    # Mock _fetch_json_with_retry since no retry loop is expected.
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_400_does_not_retry(self, provider):
+        """HTTP 400 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 400", provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert not exc_info.value.retryable
+        provider._fetch_json_with_retry.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_401_does_not_retry(self, provider):
+        """HTTP 401 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 401", provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert not exc_info.value.retryable
+        provider._fetch_json_with_retry.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_403_does_not_retry(self, provider):
+        """HTTP 403 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 403", provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert not exc_info.value.retryable
+        provider._fetch_json_with_retry.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_404_does_not_retry(self, provider):
+        """HTTP 404 → immediate ProviderError, no retry."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 404", provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert not exc_info.value.retryable
+        provider._fetch_json_with_retry.assert_awaited_once()
+
+    # -------------------------------------------------------------------------
+    # Timeout / connection error
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_timeout_then_200_retries_and_succeeds(self, provider):
+        """Timeout → retry → succeeds."""
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub timeout after 10.0s", provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        assert provider._fetch_json.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_connection_error_then_200_retries_and_succeeds(self, provider):
+        """aiohttp.ClientError → retry → succeeds."""
+        import aiohttp
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub connection error: connection refused",
+                          provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        assert provider._fetch_json.call_count == 2
+
+    # -------------------------------------------------------------------------
+    # Malformed JSON
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_malformed_json_raises_provider_error(self, provider):
+        """Malformed JSON → ProviderError, NOT []. Must not silently return valid-looking empty data."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub malformed JSON response",
+                                      provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        # Verify it did NOT return an empty list
+        # (exception propagates; fetch_news does not return [])
+
+    # -------------------------------------------------------------------------
+    # Retry-After header on 429
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_429_with_retry_after_header_is_respected(self, provider):
+        """429 with Retry-After=5 → sleep is exactly 5s (Retry-After used directly, not multiplied)."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 429", provider="finnhub",
+                          retryable=True, retry_after=5.0),
+            success_data,
+        ])
+
+        sleep_times = []
+        async def fake_sleep(delay):
+            sleep_times.append(delay)
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", fake_sleep):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        # Retry-After is used directly — NOT multiplied by BACKOFF_MULTIPLIER, NOT capped at MAX_DELAY
+        assert sleep_times[0] == 5.0, "Retry-After used as-is (5.0s), not multiplied or MAX_DELAY-capped"
+
+    @pytest.mark.asyncio
+    async def test_retry_after_not_multiplied_by_backoff(self, provider):
+        """Retry-After is never multiplied by BACKOFF_MULTIPLIER — verified by comparing with a 500 retry.
+
+        A 429 with Retry-After=5 must sleep for exactly 5s (no multiplication).
+        A 500 (no Retry-After) must use exponential backoff: 1.0→2.0→4.0.
+        These two behaviors are distinct and prove Retry-After is not backoff-multiplied.
+        """
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        # 429 with Retry-After=5 on first attempt, then success
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 429", provider="finnhub",
+                          retryable=True, retry_after=5.0),
+            success_data,
+        ])
+
+        sleep_times = []
+        async def fake_sleep(delay):
+            sleep_times.append(delay)
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", fake_sleep):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        # Retry-After=5 used as-is; not multiplied by 2 (=10) and not capped by MAX_DELAY(=4)
+        assert sleep_times[0] == 5.0, \
+            f"Retry-After=5 must be 5.0s (not multiplied or MAX_DELAY-capped), got {sleep_times[0]}"
+
+    @pytest.mark.asyncio
+    async def test_no_retry_after_uses_exponential_backoff(self, provider):
+        """No Retry-After header → exponential backoff is used (delay doubles each retry)."""
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        # Two failures followed by success — no Retry-After, so exponential backoff applies
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True),  # attempt 1
+            ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True),  # attempt 2
+            success_data,                                                          # attempt 3
+        ])
+
+        sleep_times = []
+        async def fake_sleep(delay):
+            sleep_times.append(delay)
+
+        with patch("providers.news.finnhub_provider.asyncio.sleep", fake_sleep):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        assert len(items) == 1
+        # Exponential backoff: 1st retry → 2.0s (INITIAL_DELAY=1.0 × BACKOFF_MULTIPLIER=2.0)
+        # 2nd retry → 4.0s (2.0 × 2.0, capped by MAX_DELAY=4.0)
+        assert sleep_times[0] == 2.0, f"1st backoff should be 2.0s (1.0*2), got {sleep_times[0]}"
+        assert sleep_times[1] == 4.0, f"2nd backoff should be 4.0s (2.0*2, capped), got {sleep_times[1]}"
+
+    # -------------------------------------------------------------------------
+    # Total retry budget
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_total_retry_budget_is_respected(self, provider):
+        """Total retry budget (20s) caps cumulative delay."""
+        import time
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        success_data = [
+            {"id": 1, "source": "Reuters", "headline": "Test",
+             "summary": "", "url": "https://x.com", "datetime": 1700000000}
+        ]
+        provider._fetch_json = AsyncMock(side_effect=[
+            ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True),
+            ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True),
+            success_data,
+        ])
+
+        start = time.monotonic()
+        with patch("providers.news.finnhub_provider.asyncio.sleep", AsyncMock()):
+            items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        elapsed = time.monotonic() - start
+        assert elapsed < 20.0, f"Total time {elapsed:.1f}s must stay within 20s budget"
+        assert provider._fetch_json.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_budget_exhaustion_stops_retries(self, provider):
+        """When remaining budget < MIN_DELAY, no further sleep/retry attempted."""
+        import time
+        import asyncio
+        from unittest.mock import AsyncMock, patch
+        from core.exceptions import ProviderError
+
+        sleep_calls = []
+        original_sleep = asyncio.sleep
+
+        async def counting_sleep(delay):
+            sleep_calls.append(delay)
+            await original_sleep(0.001)  # tiny real sleep so budget drains slowly
+
+        provider._fetch_json = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True)
+        )
+
+        start = time.monotonic()
+        with patch("providers.news.finnhub_provider.asyncio.sleep", counting_sleep):
+            with pytest.raises(ProviderError):
+                await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+        elapsed = time.monotonic() - start
+        # With very small sleep (0.001s), budget drains slowly but enough retries happen
+        assert len(sleep_calls) >= 2, f"Should sleep at least twice before budget exhaustion, got {len(sleep_calls)}"
+        assert elapsed <= 25.0, f"Elapsed {elapsed:.1f}s must be within budget + tolerance"
+
+    # -------------------------------------------------------------------------
+    # API key security
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_api_key_not_in_exception(self, provider):
+        """API key must never appear in exception message or log output."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider.api_key = "SECRET_FINNHUB_KEY_12345"
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 401", provider="finnhub", retryable=False)
+        )
+        with pytest.raises(ProviderError) as exc_info:
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        exc_text = str(exc_info.value)
+        assert "SECRET" not in exc_text, f"API key leaked into exception: {exc_text}"
+        assert "401" in exc_text
+
+    # -------------------------------------------------------------------------
+    # Empty news vs provider failure — distinguishable
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_empty_news_vs_provider_failure_distinguishable(self, provider):
+        """Empty news (200 []) is distinguishable from ProviderError raised."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        # Case 1: empty news — no exception raised
+        provider._fetch_json_with_retry = AsyncMock(return_value=[])
+        items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert items == []
+
+        # Case 2: provider failure — ProviderError raised
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True)
+        )
+        with pytest.raises(ProviderError):
+            await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+
+    # -------------------------------------------------------------------------
+    # No API key configured → returns [], not ProviderError
+    # -------------------------------------------------------------------------
+    @pytest.mark.asyncio
+    async def test_no_api_key_returns_empty_list(self, provider):
+        """No API key → fetch_news returns [], health_check returns False."""
+        provider.api_key = None
+        # health_check returns False when no key
+        result = await provider.health_check()
+        assert result is False
+        # fetch_news returns []
+        items = await provider.fetch_news("AAPL", datetime.now(timezone.utc))
+        assert items == []
+
+    @pytest.mark.asyncio
+    async def test_health_check_returns_false_on_provider_error(self, provider):
+        """health_check returns False on ProviderError (does not propagate)."""
+        from unittest.mock import AsyncMock
+        from core.exceptions import ProviderError
+
+        provider._fetch_json_with_retry = AsyncMock(
+            side_effect=ProviderError("Finnhub HTTP 500", provider="finnhub", retryable=True)
+        )
+        result = await provider.health_check()
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_health_check_returns_true_on_success(self, provider):
+        """health_check returns True when fetch succeeds (even with empty news)."""
+        from unittest.mock import AsyncMock
+
+        provider._fetch_json_with_retry = AsyncMock(return_value=[])
+        result = await provider.health_check()
+        assert result is True

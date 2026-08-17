@@ -8,10 +8,17 @@ class HunterError(Exception):
 
 class ProviderError(HunterError):
     """External API/provider failure."""
-    def __init__(self, message: str, provider: str = "unknown", retryable: bool = True):
+    def __init__(
+        self,
+        message: str,
+        provider: str = "unknown",
+        retryable: bool = True,
+        retry_after: float = None,
+    ):
         super().__init__(message)
         self.provider = provider
         self.retryable = retryable
+        self.retry_after = retry_after  # seconds; set by rate-limit (HTTP 429) responses
 
 
 class DataInsufficientError(HunterError):
