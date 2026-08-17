@@ -103,6 +103,7 @@ class HunterOrchestrator:
 
 
 async def main():
+    SETTINGS.validate_production()
     orchestrator = HunterOrchestrator()
     for ticker in ["AAPL", "NVDA", "TSLA"]:
         signal = await orchestrator.process_ticker(ticker)

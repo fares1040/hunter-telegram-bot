@@ -1,11 +1,21 @@
 """Central configuration for Hunter Bot."""
-from typing import Optional
+from typing import List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator
+
+from core.exceptions import ConfigurationError
+
+
+# Sentinel values that indicate a credential was never configured.
+# These must be rejected at production startup.
+PRODUCTION_INVALID_TELEGRAM = {"test", "changeme", "your-token", ""}
+PRODUCTION_INVALID_POLYGON = {"test", "changeme", "your-api-key", ""}
+PRODUCTION_INVALID_FINNHUB = {"test", "changeme", "your-api-key", ""}
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore", populate_by_name=True)
+
     telegram_bot_token: str = Field(default="test", alias="TELEGRAM_BOT_TOKEN")
     telegram_chat_id: str = Field(default="test", alias="TELEGRAM_CHAT_ID")
     openai_api_key: str = Field(default="", alias="OPENAI_API_KEY")
@@ -30,8 +40,47 @@ class Settings(BaseSettings):
         return v.upper()
 
     @property
-    def has_polygon(self): return bool(self.polygon_api_key and self.polygon_api_key.strip())
+    def has_polygon(self) -> bool:
+        key = self.polygon_api_key
+        return bool(key and key.strip() and key.strip() not in PRODUCTION_INVALID_POLYGON)
+
     @property
-    def has_finnhub(self): return bool(self.finnhub_api_key and self.finnhub_api_key.strip())
+    def has_finnhub(self) -> bool:
+        key = self.finnhub_api_key
+        return bool(key and key.strip() and key.strip() not in PRODUCTION_INVALID_FINNHUB)
+
+    @property
+    def telegram_configured(self) -> bool:
+        """True when Telegram credentials are present and not placeholder values."""
+        return (
+            bool(self.telegram_bot_token and self.telegram_bot_token.strip())
+            and self.telegram_bot_token.strip() not in PRODUCTION_INVALID_TELEGRAM
+            and bool(self.telegram_chat_id and self.telegram_chat_id.strip())
+            and self.telegram_chat_id.strip() not in PRODUCTION_INVALID_TELEGRAM
+        )
+
+    def validate_production(self) -> None:
+        """Validate required configuration for production startup.
+
+        Raises ConfigurationError with a clear message listing all problems.
+        Never exposes secret values in the error message.
+        """
+        errors: List[str] = []
+
+        # Telegram is always required — bot cannot function without it
+        if not self.telegram_configured:
+            missing = []
+            if not self.telegram_bot_token or self.telegram_bot_token.strip() in PRODUCTION_INVALID_TELEGRAM:
+                missing.append("TELEGRAM_BOT_TOKEN")
+            if not self.telegram_chat_id or self.telegram_chat_id.strip() in PRODUCTION_INVALID_TELEGRAM:
+                missing.append("TELEGRAM_CHAT_ID")
+            if missing:
+                errors.append(f"Missing or placeholder value for: {', '.join(missing)}")
+
+        if errors:
+            raise ConfigurationError(
+                f"Configuration errors at startup:\n  - " + "\n  - ".join(errors)
+            )
+
 
 SETTINGS = Settings()

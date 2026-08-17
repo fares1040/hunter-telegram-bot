@@ -34,3 +34,8 @@ class SessionError(HunterError):
 class NewsValidationError(HunterError):
     """News failed quality/materiality gates."""
     pass
+
+
+class ConfigurationError(HunterError):
+    """Invalid or missing application configuration."""
+    pass
