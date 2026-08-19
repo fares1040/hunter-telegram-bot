@@ -483,9 +483,11 @@ class TestYFinancePreviousClose:
 class TestCleanImportsAndSettings:
     def test_settings_loads_without_env(self):
         """Settings module loads without .env; placeholder defaults are accepted by the class."""
-        import config.settings as settings_module
-        assert settings_module.SETTINGS.telegram_bot_token == "test"
-        assert settings_module.SETTINGS.openai_model
+        from config.settings import Settings
+        # Create a fresh Settings instance without reading .env
+        s = Settings(_env_file=None)
+        assert s.telegram_bot_token == "test"
+        assert s.openai_model
 
     def test_finnhub_and_news_engine_imports(self):
         from providers.news.finnhub_provider import FinnhubNewsProvider
@@ -500,7 +502,7 @@ class TestStartupConfiguration:
     def test_valid_telegram_config_passes_validation(self):
         """Valid TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID → no exception."""
         from config.settings import Settings
-        s = Settings(telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="111111")
+        s = Settings(_env_file=None, telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="111111")
         # Should not raise
         s.validate_production()
 
@@ -508,7 +510,7 @@ class TestStartupConfiguration:
         """Missing TELEGRAM_BOT_TOKEN → ConfigurationError."""
         from config.settings import Settings
         from core.exceptions import ConfigurationError
-        s = Settings(telegram_bot_token="", telegram_chat_id="123456")
+        s = Settings(_env_file=None, telegram_bot_token="", telegram_chat_id="123456")
         with pytest.raises(ConfigurationError) as exc:
             s.validate_production()
         assert "TELEGRAM_BOT_TOKEN" in str(exc.value)
@@ -518,7 +520,7 @@ class TestStartupConfiguration:
         """Missing TELEGRAM_CHAT_ID → ConfigurationError."""
         from config.settings import Settings
         from core.exceptions import ConfigurationError
-        s = Settings(telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="")
+        s = Settings(_env_file=None, telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="")
         with pytest.raises(ConfigurationError) as exc:
             s.validate_production()
         assert "TELEGRAM_CHAT_ID" in str(exc.value)
@@ -527,7 +529,7 @@ class TestStartupConfiguration:
         """Both TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID missing → both listed in error."""
         from config.settings import Settings
         from core.exceptions import ConfigurationError
-        s = Settings(telegram_bot_token="", telegram_chat_id="")
+        s = Settings(_env_file=None, telegram_bot_token="", telegram_chat_id="")
         with pytest.raises(ConfigurationError) as exc:
             s.validate_production()
         msg = str(exc.value)
@@ -538,7 +540,7 @@ class TestStartupConfiguration:
         """Placeholder value 'test' for token → ConfigurationError."""
         from config.settings import Settings
         from core.exceptions import ConfigurationError
-        s = Settings(telegram_bot_token="test", telegram_chat_id="123456")
+        s = Settings(_env_file=None, telegram_bot_token="test", telegram_chat_id="123456")
         with pytest.raises(ConfigurationError):
             s.validate_production()
 
@@ -546,7 +548,7 @@ class TestStartupConfiguration:
         """Placeholder value 'test' for chat_id → ConfigurationError."""
         from config.settings import Settings
         from core.exceptions import ConfigurationError
-        s = Settings(telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="test")
+        s = Settings(_env_file=None, telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw", telegram_chat_id="test")
         with pytest.raises(ConfigurationError):
             s.validate_production()
 
@@ -555,7 +557,7 @@ class TestStartupConfiguration:
         from config.settings import Settings
         from core.exceptions import ConfigurationError
         real_token = "123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw"
-        s = Settings(telegram_bot_token=real_token, telegram_chat_id="")
+        s = Settings(_env_file=None, telegram_bot_token=real_token, telegram_chat_id="")
         with pytest.raises(ConfigurationError) as exc:
             s.validate_production()
         msg = str(exc.value)
@@ -567,6 +569,7 @@ class TestStartupConfiguration:
         """Missing OPENAI_API_KEY → startup succeeds (AI has graceful fallback)."""
         from config.settings import Settings
         s = Settings(
+            _env_file=None,
             telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
             telegram_chat_id="111111",
             openai_api_key="",
@@ -578,6 +581,7 @@ class TestStartupConfiguration:
         """Missing POLYGON_API_KEY → startup succeeds (falls back to yfinance)."""
         from config.settings import Settings
         s = Settings(
+            _env_file=None,
             telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
             telegram_chat_id="111111",
             polygon_api_key=None,
@@ -588,6 +592,7 @@ class TestStartupConfiguration:
         """Missing FINNHUB_API_KEY → startup succeeds (degrades to no news)."""
         from config.settings import Settings
         s = Settings(
+            _env_file=None,
             telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
             telegram_chat_id="111111",
             finnhub_api_key=None,
@@ -598,6 +603,7 @@ class TestStartupConfiguration:
         """Polygon key set to placeholder is not treated as configured."""
         from config.settings import Settings
         s = Settings(
+            _env_file=None,
             telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
             telegram_chat_id="111111",
             polygon_api_key="test",
@@ -609,6 +615,7 @@ class TestStartupConfiguration:
         """Finnhub key set to placeholder is not treated as configured."""
         from config.settings import Settings
         s = Settings(
+            _env_file=None,
             telegram_bot_token="123456:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw",
             telegram_chat_id="111111",
             finnhub_api_key="test",
@@ -620,6 +627,7 @@ class TestStartupConfiguration:
         from config.settings import Settings
         from core.exceptions import ConfigurationError
         s = Settings(
+            _env_file=None,
             telegram_bot_token="   ",
             telegram_chat_id="111111",
         )
@@ -639,8 +647,8 @@ class TestStartupConfiguration:
         import config.settings as settings_module
         original_settings = settings_module.SETTINGS
 
-        # Replace SETTINGS with one using placeholder defaults
-        settings_module.SETTINGS = settings_module.Settings()
+        # Replace SETTINGS with one using placeholder defaults (no .env)
+        settings_module.SETTINGS = settings_module.Settings(_env_file=None)
 
         try:
             with pytest.raises(ConfigurationError):

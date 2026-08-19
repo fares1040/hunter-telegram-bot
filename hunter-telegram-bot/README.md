@@ -99,7 +99,7 @@ python -m compileall .
 pytest -q
 ```
 
-Current local suite: **28 passed, 0 failed**.
+Current local suite: **91 passed, 0 failed**.
 
 ## Run
 
