@@ -8,7 +8,7 @@ from core.exceptions import ConfigurationError
 
 # Sentinel values that indicate a credential was never configured.
 # These must be rejected at production startup.
-PRODUCTION_INVALID_TELEGRAM = {"test", "changeme", "your-token", ""}
+PRODUCTION_INVALID_TELEGRAM = {"test", "changeme", "your-token", "your_telegram_bot_token_here", "your_telegram_chat_id_here", ""}
 PRODUCTION_INVALID_POLYGON = {"test", "changeme", "your-api-key", ""}
 PRODUCTION_INVALID_FINNHUB = {"test", "changeme", "your-api-key", ""}
 
@@ -38,6 +38,17 @@ class Settings(BaseSettings):
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if v.upper() not in allowed: raise ValueError(f"LOG_LEVEL must be one of {allowed}")
         return v.upper()
+
+    @field_validator("account_size", mode="before")
+    @classmethod
+    def _empty_account_size_to_none(cls, v):
+        # An empty string (e.g. ACCOUNT_SIZE= in .env) must map to None,
+        # not fail float parsing.
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip() == "":
+            return None
+        return v
 
     @property
     def has_polygon(self) -> bool:
