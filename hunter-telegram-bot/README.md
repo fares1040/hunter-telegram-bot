@@ -129,3 +129,12 @@ This release addresses four critical production areas:
 4. **No-lookahead backtesting:** replay utilities model entry/stop/targets bar-by-bar and report hit rate, average R and drawdown without peeking into future bars.
 
 Additional context added: market regime, sector strength, trap-risk multiplier scoring, persistent memory, and clear separation between chain-derived inference and true order-flow evidence.
+
+## Version 2.2.0 — Continuous Operation & Interactive Commands
+
+The bot is now a long-running service instead of a one-shot scan:
+
+1. **Session-aware scheduler** (`core/scheduler.py`): full watchlist passes on a loop with per-session pacing — `SCAN_INTERVAL_REGULAR`, `SCAN_INTERVAL_EXTENDED` (premarket/after-hours), `SCAN_INTERVAL_CLOSED`.
+2. **Persistent watchlist** (`core/watchlist.py`): SQLite-backed; survives restarts; seeded with AAPL/NVDA/TSLA.
+3. **Interactive Telegram commands** (`bot/commands.py`): `/scan [TICKER]`, `/add TICKER`, `/remove TICKER`, `/watchlist`, `/status`, `/stats`, `/help`. Commands are restricted to authorized chat IDs (`TELEGRAM_CHAT_ID` plus optional `TELEGRAM_AUTHORIZED_CHAT_ID`).
+4. **Deterministic test clock**: fixtures anchor to the most recent regular-session minute so the suite no longer fails when run on weekends/holidays (120 tests passing).

@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     market_timezone: str = Field(default="America/New_York", alias="MARKET_TIMEZONE")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     memory_db_path: str = Field(default="data/hunter_memory.sqlite3", alias="MEMORY_DB_PATH")
+    scan_interval_regular: int = Field(default=300, ge=30, le=3600, alias="SCAN_INTERVAL_REGULAR")
+    scan_interval_extended: int = Field(default=900, ge=30, le=14400, alias="SCAN_INTERVAL_EXTENDED")
+    scan_interval_closed: int = Field(default=1800, ge=30, le=86400, alias="SCAN_INTERVAL_CLOSED")
+    telegram_commands_enabled: bool = Field(default=True, alias="TELEGRAM_COMMANDS_ENABLED")
+    telegram_authorized_chat_id: Optional[str] = Field(default=None, alias="TELEGRAM_AUTHORIZED_CHAT_ID")
 
     @field_validator("log_level")
     @classmethod
@@ -69,6 +74,15 @@ class Settings(BaseSettings):
             and bool(self.telegram_chat_id and self.telegram_chat_id.strip())
             and self.telegram_chat_id.strip() not in PRODUCTION_INVALID_TELEGRAM
         )
+
+    @property
+    def authorized_chat_ids(self) -> set:
+        """Chat IDs allowed to issue commands. Defaults to the alert chat."""
+        ids = {self.telegram_chat_id.strip()}
+        extra = (self.telegram_authorized_chat_id or "").strip()
+        if extra:
+            ids.update(x.strip() for x in extra.split(",") if x.strip())
+        return {i for i in ids if i}
 
     def validate_production(self) -> None:
         """Validate required configuration for production startup.
