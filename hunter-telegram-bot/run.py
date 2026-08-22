@@ -27,6 +27,9 @@ from engines.trap_engine import TrapEngine
 from engines.market_context import MarketContextEngine
 from ai.analyzer import AIAnalyzer
 from bot.telegram_bot import TelegramNotifier
+from bot.commands import TelegramCommandBot
+from core.watchlist import WatchlistStore
+from core.scheduler import ScanScheduler
 from models.signal import HunterSignal, HunterDecision
 
 
@@ -105,9 +108,28 @@ class HunterOrchestrator:
 async def main():
     SETTINGS.validate_production()
     orchestrator = HunterOrchestrator()
-    for ticker in ["AAPL", "NVDA", "TSLA"]:
-        signal = await orchestrator.process_ticker(ticker)
-        LOGGER.info(f"{ticker}: {signal.decision.value} | {signal.hunter_score}/100")
-        await asyncio.sleep(1)
+    watchlist = WatchlistStore(SETTINGS.memory_db_path)
+    scheduler = ScanScheduler(orchestrator, watchlist)
+    command_bot = None
+    if SETTINGS.telegram_commands_enabled:
+        command_bot = TelegramCommandBot(orchestrator, watchlist, orchestrator.memory, scheduler)
+        try:
+            await command_bot.start()
+        except Exception as e:
+            LOGGER.error(f"[Main] Telegram commands failed to start: {e}")
+            command_bot = None
+    LOGGER.info(
+        f"[Main] Hunter running | session={SessionClock.get_session().value} | "
+        f"watchlist={watchlist.list()} | commands={'ON' if command_bot else 'OFF'}"
+    )
+    try:
+        await scheduler.run_forever()
+    finally:
+        if command_bot:
+            await command_bot.shutdown()
 
-if __name__ == "__main__": asyncio.run(main())
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        LOGGER.info("[Main] Interrupted — goodbye")

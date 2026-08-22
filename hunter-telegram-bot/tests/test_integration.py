@@ -33,7 +33,33 @@ from engines.technical_engine import TechnicalEngine
 from engines.decision_engine import DecisionEngine
 
 
-TEST_NEWS_TIME = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(minutes=30)
+def _deterministic_test_news_time() -> datetime:
+    """Most recent regular-session weekday minute (ET).
+
+    Keeps fixtures inside REGULAR session no matter which day the suite runs,
+    so reaction engines never see a weekend CLOSED session.
+    """
+    from datetime import time as _time
+    et = pytz.timezone("America/New_York")
+    t = datetime.now(et).replace(second=0, microsecond=0)
+    for _ in range(10 * 1440):
+        if t.weekday() < 5 and _time(9, 50) <= t.time() <= _time(15, 50):
+            return t.astimezone(pytz.UTC)
+        t -= timedelta(minutes=1)
+    raise RuntimeError("No regular session minute found within 10 days")
+
+
+TEST_NEWS_TIME = _deterministic_test_news_time()
+
+# Freeze fixture freshness against TEST_NEWS_TIME instead of the wall clock,
+# so the suite behaves identically on weekends and holidays.
+def _fixture_age_minutes(self):
+    if not self.published_at:
+        return None
+    pub = self.published_at if self.published_at.tzinfo else pytz.UTC.localize(self.published_at)
+    return (TEST_NEWS_TIME - pub).total_seconds() / 60.0
+
+NewsItem.age_minutes = property(_fixture_age_minutes)
 
 
 def make_intraday_bars(price: float, change: float, regular_vol: int) -> pd.DataFrame:
