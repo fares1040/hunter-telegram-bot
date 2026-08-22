@@ -39,7 +39,7 @@ class NewsEngine:
             return []
 
         clusters: List[List[NewsItem]] = []
-        sorted_items = sorted(items, key=lambda x: x.published_at or datetime.min)
+        sorted_items = sorted(items, key=lambda x: x.published_at or datetime.min.replace(tzinfo=timezone.utc))
 
         for item in sorted_items:
             placed = False

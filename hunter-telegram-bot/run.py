@@ -14,8 +14,10 @@ from providers.market_data.base_provider import MarketDataProvider
 from providers.market_data.yfinance_options_provider import YFinanceOptionsProvider
 from providers.market_data.polygon_options_provider import PolygonOptionsProvider
 from providers.news.finnhub_provider import FinnhubNewsProvider
+from providers.news.yfinance_provider import YFinanceNewsProvider
 from providers.news.base_provider import NewsProvider
 from engines.news_engine import NewsEngine
+from engines.catalyst_engine import CatalystEngine
 from engines.candidate_gate import CandidateGate
 from engines.market_reaction_engine import MarketReactionEngine
 from engines.liquidity_proxy import LiquidityProxyEngine
@@ -40,8 +42,9 @@ class HunterOrchestrator:
     def __init__(self):
         self.market_provider: MarketDataProvider = PolygonProvider(SETTINGS.polygon_api_key) if SETTINGS.has_polygon else YFinanceProvider()
         self.options_provider = PolygonOptionsProvider(SETTINGS.polygon_api_key) if SETTINGS.has_polygon else YFinanceOptionsProvider()
-        self.news_providers: List[NewsProvider] = [FinnhubNewsProvider()] if SETTINGS.has_finnhub else []
+        self.news_providers: List[NewsProvider] = ([FinnhubNewsProvider()] if SETTINGS.has_finnhub else []) + [YFinanceNewsProvider()]
         self.news_engine = NewsEngine(self.news_providers)
+        self.catalyst_engine = CatalystEngine()
         self.candidate_gate = CandidateGate()
         self.reaction_engine = MarketReactionEngine(); self.liquidity_engine = LiquidityProxyEngine(); self.technical_engine = TechnicalEngine()
         self.options_engine = OptionsEngine(); self.risk_engine = RiskEngine(); self.trap_engine = TrapEngine(); self.decision_engine = DecisionEngine(); self.ai_analyzer = AIAnalyzer()
@@ -66,6 +69,7 @@ class HunterOrchestrator:
         events = self.news_engine.filter_material_events(self.news_engine.cluster_events(raw_news))
         if not events:
             return self._ignore_signal(ticker, "No material events after filtering")
+        catalyst_profile = self.catalyst_engine.enrich(events[0])
         event = await self.ai_analyzer.analyze_event(events[0])
         reaction = self.reaction_engine.analyze(event, data)
         liquidity = self.liquidity_engine.analyze(data)
@@ -76,6 +80,8 @@ class HunterOrchestrator:
         options = self.options_engine.analyze(options_snapshot, data.current_price, bullish=bullish)
         risk = self.risk_engine.build_plan(data.current_price, technical, SETTINGS.account_size, SETTINGS.risk_per_trade_pct)
         trap_risk, trap_warnings = self.trap_engine.analyze(data, event, reaction, liquidity, technical)
+        if catalyst_profile.is_trap_risk:
+            trap_warnings = list(trap_warnings) + [f"CATALYST: {reason}" for reason in catalyst_profile.trap_reasons]
         confidence = self._build_confidence(data, event, technical, options)
         signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context)
         key = f"{ticker}:{event.event_id}"
