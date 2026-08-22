@@ -30,6 +30,9 @@ from bot.telegram_bot import TelegramNotifier
 from bot.commands import TelegramCommandBot
 from core.watchlist import WatchlistStore
 from core.scheduler import ScanScheduler
+from engines.discovery import DiscoveryEngine
+from providers.universe.watchlist_provider import WatchlistUniverseProvider
+from providers.universe.yfinance_screener_provider import YFinanceScreenerUniverseProvider
 from models.signal import HunterSignal, HunterDecision
 
 
@@ -109,10 +112,17 @@ async def main():
     SETTINGS.validate_production()
     orchestrator = HunterOrchestrator()
     watchlist = WatchlistStore(SETTINGS.memory_db_path)
-    scheduler = ScanScheduler(orchestrator, watchlist)
+    discovery_engine = None
+    if SETTINGS.discovery_enabled:
+        universe_providers = [
+            WatchlistUniverseProvider(watchlist),
+            YFinanceScreenerUniverseProvider(),
+        ]
+        discovery_engine = DiscoveryEngine(universe_providers)
+    scheduler = ScanScheduler(orchestrator, watchlist, discovery_engine=discovery_engine)
     command_bot = None
     if SETTINGS.telegram_commands_enabled:
-        command_bot = TelegramCommandBot(orchestrator, watchlist, orchestrator.memory, scheduler)
+        command_bot = TelegramCommandBot(orchestrator, watchlist, orchestrator.memory, scheduler, discovery_engine)
         try:
             await command_bot.start()
         except Exception as e:
@@ -120,7 +130,8 @@ async def main():
             command_bot = None
     LOGGER.info(
         f"[Main] Hunter running | session={SessionClock.get_session().value} | "
-        f"watchlist={watchlist.list()} | commands={'ON' if command_bot else 'OFF'}"
+        f"watchlist={watchlist.list()} | commands={'ON' if command_bot else 'OFF'} | "
+        f"discovery={'ON' if discovery_engine else 'OFF'}"
     )
     try:
         await scheduler.run_forever()

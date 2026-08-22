@@ -14,6 +14,7 @@ MAX_MANUAL_SCAN_TICKERS = 10
 HELP_TEXT = (
     "🤖 <b>HUNTER BOT — COMMANDS</b>\n"
     "\n"
+    "/discover — Scan the market for fresh candidates\n"
     "/scan [TICKER] — Scan one ticker (or the whole watchlist)\n"
     "/add TICKER — Add ticker to watchlist\n"
     "/remove TICKER — Remove ticker from watchlist\n"
@@ -44,11 +45,12 @@ def _authorized(func):
 class TelegramCommandBot:
     """Registers slash commands on a python-telegram-bot Application."""
 
-    def __init__(self, orchestrator, watchlist, memory, scheduler=None):
+    def __init__(self, orchestrator, watchlist, memory, scheduler=None, discovery_engine=None):
         self.orchestrator = orchestrator
         self.watchlist = watchlist
         self.memory = memory
         self.scheduler = scheduler
+        self.discovery_engine = discovery_engine
         self.authorized_ids = SETTINGS.authorized_chat_ids
         self.application: Optional[Application] = None
 
@@ -63,6 +65,7 @@ class TelegramCommandBot:
             "watchlist": self.cmd_watchlist,
             "status": self.cmd_status,
             "stats": self.cmd_stats,
+            "discover": self.cmd_discover,
         }
         for name, cb in routes.items():
             app.add_handler(CommandHandler(name, cb))
@@ -150,6 +153,36 @@ class TelegramCommandBot:
             return
         lines = ["📋 <b>WATCHLIST</b>", ""] + [f"• <code>{t}</code>" for t in tickers]
         lines.append(f"\nTotal: <b>{len(tickers)}</b>")
+        await self._reply(update, "\n".join(lines))
+
+    @_authorized
+    async def cmd_discover(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if self.discovery_engine is None:
+            await self._reply(update, "❌ Discovery engine is disabled (DISCOVERY_ENABLED=false)")
+            return
+        await self._reply(update, "🔭 Scanning the market for candidates…")
+        pool = await self.discovery_engine.refresh(force=True)
+        if not pool.candidates:
+            text = "🔭 <b>DISCOVERY</b>\n\nNo candidates found this pass."
+            if pool.warnings:
+                text += "\n⚠️ " + "; ".join(pool.warnings[:3])
+            await self._reply(update, text)
+            return
+        lines = [
+            f"🔭 <b>HUNTER DISCOVERY</b> — {pool.session.value}",
+            "",
+        ]
+        for i, c in enumerate(pool.candidates[:8], 1):
+            price = f"${c.price:.2f}" if c.price is not None else "?"
+            chg = f"{c.change_percent:+.1f}%" if c.change_percent is not None else "?"
+            reasons = ",".join(c.reasons[:2])
+            missing = f" <i>[missing: {','.join(c.missing_fields)}]</i>" if c.missing_fields else ""
+            lines.append(f"{i}. <code>{c.symbol}</code> — {price} | {chg} | {c.discovery_score}/100 | {reasons}{missing}")
+        lines += [
+            "",
+            f"raw={pool.raw_count} unique={len(pool.candidates)} dupes={pool.duplicate_count} invalid={pool.invalid_count}",
+            "<i>Candidates feed the normal Hunter pipeline; nothing is auto-alerted.</i>",
+        ]
         await self._reply(update, "\n".join(lines))
 
     @_authorized

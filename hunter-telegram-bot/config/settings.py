@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     scan_interval_closed: int = Field(default=1800, ge=30, le=86400, alias="SCAN_INTERVAL_CLOSED")
     telegram_commands_enabled: bool = Field(default=True, alias="TELEGRAM_COMMANDS_ENABLED")
     telegram_authorized_chat_id: Optional[str] = Field(default=None, alias="TELEGRAM_AUTHORIZED_CHAT_ID")
+    discovery_enabled: bool = Field(default=True, alias="DISCOVERY_ENABLED")
+    discovery_pool_size: int = Field(default=10, ge=1, le=50, alias="DISCOVERY_POOL_SIZE")
+    discovery_cache_ttl: int = Field(default=180, ge=30, le=3600, alias="DISCOVERY_CACHE_TTL")
+    discovery_min_abs_change: float = Field(default=3.0, ge=0.5, le=50.0, alias="DISCOVERY_MIN_ABS_CHANGE")
+    discovery_max_candidates_per_source: int = Field(default=25, ge=1, le=100, alias="DISCOVERY_MAX_CANDIDATES_PER_SOURCE")
 
     @field_validator("log_level")
     @classmethod

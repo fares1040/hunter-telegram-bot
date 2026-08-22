@@ -13,7 +13,11 @@ import types
 
 # Keep local tests independent from installed vendor SDKs/network. The production
 # requirements still include yfinance and python-telegram-bot.
-if "yfinance" not in sys.modules:
+# Only fall back to the stub when the REAL package cannot be imported, otherwise
+# the stub leaks into later modules (e.g. screener capability detection).
+try:
+    import yfinance  # noqa: F401
+except Exception:
     fake_yf = types.ModuleType("yfinance")
     fake_yf.Ticker = lambda *args, **kwargs: None
     sys.modules["yfinance"] = fake_yf

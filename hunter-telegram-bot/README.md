@@ -138,3 +138,15 @@ The bot is now a long-running service instead of a one-shot scan:
 2. **Persistent watchlist** (`core/watchlist.py`): SQLite-backed; survives restarts; seeded with AAPL/NVDA/TSLA.
 3. **Interactive Telegram commands** (`bot/commands.py`): `/scan [TICKER]`, `/add TICKER`, `/remove TICKER`, `/watchlist`, `/status`, `/stats`, `/help`. Commands are restricted to authorized chat IDs (`TELEGRAM_CHAT_ID` plus optional `TELEGRAM_AUTHORIZED_CHAT_ID`).
 4. **Deterministic test clock**: fixtures anchor to the most recent regular-session minute so the suite no longer fails when run on weekends/holidays (120 tests passing).
+
+## Version 2.3.0 — Phase 2.5: Market Discovery Engine
+
+Hunter now searches the market instead of only scanning a fixed watchlist:
+
+1. **Universe provider interface** (`providers/universe/base_provider.py`): pluggable sources answering "which symbols are worth looking at right now?" with whatever real metrics they supply — nothing invented.
+2. **YFinance screener provider** (`providers/universe/yfinance_screener_provider.py`): real live discovery via the Yahoo screener API — session-aware query plans (custom low-threshold movers + predefined gainers/losers/most-actives), NASDAQ/NYSE only, OTC deliberately excluded until a reliable source exists.
+3. **Watchlist universe provider**: user symbols always included as a source.
+4. **DiscoveryEngine** (`engines/discovery.py`): normalization → deduplication (cross-source merge) → filters → transparent 0–100 score with per-component breakdown (`score_breakdown`) and explicit `missing_fields`; bounded concurrency; TTL cache; provider failures isolated.
+5. **Integration**: scheduler merges the ranked candidate pool into each scan pass (`max_scan_batch` capped); `/discover` command shows the pool without auto-alerting.
+
+Known limits (documented, by design): delayed data, extended-hours screener coverage not guaranteed, Polygon real-time snapshot/gainer endpoints are paid-tier — a `PolygonUniverseProvider` can slot in behind the same interface later.
