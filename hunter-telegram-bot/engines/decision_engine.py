@@ -18,7 +18,7 @@ class DecisionEngine:
     def __init__(self):
         self.scorer = CompositeScoringEngine()
 
-    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None):
+    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None):
         options = options or OptionsFlowProfile()
         risk_plan = risk_plan or RiskPlan(valid=True, confidence=70)
         trap_warnings = trap_warnings or []
@@ -46,6 +46,10 @@ class DecisionEngine:
             signal.sector_strength = market_context.sector_strength
         signal.trap_risk = trap_risk
         signal.warnings = list(technical.warnings) + list(trap_warnings) + list(options.notes)
+        if technical_intelligence is not None:
+            signal.warnings.append(
+                f"TECH[{technical_intelligence.timeframe}] {technical_intelligence.summary()}"
+            )
         if options.contract_candidate:
             c = options.contract_candidate
             signal.contract_symbol = c.contract_symbol

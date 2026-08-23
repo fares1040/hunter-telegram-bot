@@ -163,3 +163,22 @@ Every news event now gets a deterministic, explainable intelligence profile befo
 6. **Fix**: `cluster_events` crashed when any article lacked a timestamp (naive-vs-aware datetime sort); now handled. `CatalystType` extended additively (GUIDANCE, DILUTION, BANKRUPTCY, REGULATORY, CLINICAL_TRIAL).
 
 203 tests passing.
+
+## Version 2.5.0 — Phase 2.7: Technical Intelligence Engine
+
+Raw market data is now turned into structured, explainable technical intelligence — without touching the legacy pipeline consumed by Risk/Trap/Decision:
+
+1. **Structured model** (`models/technical.py`): `TechnicalIntelligence` with strict REAL DATA / INFERENCE / SCORE separation and a `timeframe` field ("1d" today) so multi-timeframe analysis can slot in later without structural changes.
+2. **Trend**: MA20/50/200 (MA200 only from real 200-bar history — the old MA50 fallback was a silent fake), price-vs-MA distances, alignment string, 5-day MA slopes, HH/HL/LH/LL pivot structure with evidence → BULLISH / BEARISH / NEUTRAL / TRANSITION; UNKNOWN when history is insufficient.
+3. **Momentum**: RSI(14), ROC-5/ROC-10, MACD(12/26/9) when ≥35 bars, BUILDING/FADING acceleration via RSI delta, conservative two-pivot RSI divergence only when clearly detectable → STRONG/POSITIVE/NEUTRAL/NEGATIVE/WEAK.
+4. **Volatility**: ATR + ATR%, Bollinger bands/width, width percentile vs trailing widths → SQUEEZE / EXPANSION / NORMAL / EXTREME (ATR% > 8 forces EXTREME).
+5. **VWAP**: computed from real intraday bars when present (ΣTP·V/ΣV), else provider session snapshot, else explicitly UNAVAILABLE — never fabricated. Reclaim/rejection flags require bar data.
+6. **Volume/RVOL**: reuses `TickerData.relative_volume`/`dollar_volume`; spike ratio, volume acceleration, dollar volume → LOW/NORMAL/ELEVATED/HIGH/EXTREME.
+7. **Support/Resistance**: deterministic levels from swing pivots (touch-counted), previous-day high/low, premarket high/low, 10-day extremes; each level carries price, type, strength 0–100, distance %, and source evidence; near-duplicates merge with combined evidence.
+8. **Setups**: FAILED_BREAKOUT, BREAKOUT/HIGHER_HIGH_BREAKOUT, LOWER_LOW_BREAKDOWN, VWAP_RECLAIM/REJECTION, PULLBACK, RESISTANCE/SUPPORT_TEST, CONSOLIDATION — every detection carries explicit evidence.
+9. **Explainable Technical Score** (0–100): six components with documented weights — Trend 25%, Momentum 25%, Volume 15%, Volatility 15%, Structure/S-R 15%, VWAP 5% — renormalized over available components; unavailable components are listed with reasons in the breakdown.
+10. **Integration**: intelligence is built inside the existing `TechnicalEngine.analyze()` from already-loaded data (zero new network calls, ~7 ms/ticker CPU); legacy `setup_score` semantics preserved for Risk/Trap/Decision gates; DecisionEngine optionally receives the intelligence object and surfaces its summary on signals.
+
+Known limitations: RVOL depends on provider-supplied session volume/avg-volume fields (honestly None when absent); divergence detection intentionally conservative; multi-timeframe execution deferred until intraday resampling lands.
+
+252 tests passing (208 preserved + 44 new).
