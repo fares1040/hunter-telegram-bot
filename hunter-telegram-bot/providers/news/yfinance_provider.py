@@ -10,12 +10,12 @@ mapping mirrors Finnhub conventions. Malformed/missing fields are skipped —
 never fabricated.
 """
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 
 
 from providers.news.base_provider import NewsProvider
-from models.news import NewsItem, SourceTier
+from models.news import NewsItem, SourceTier, ensure_utc
 from utils.logger import LOGGER
 
 
@@ -42,9 +42,10 @@ def _parse_pub_date(raw) -> Optional[datetime]:
     if not raw or not isinstance(raw, str):
         return None
     try:
-        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError:
         return None
+    return ensure_utc(parsed)
 
 
 class YFinanceNewsProvider(NewsProvider):

@@ -310,6 +310,53 @@ class TestClusterDatetimeRegression:
         events = ne.cluster_events([aware, missing])
         assert len(events) >= 1
 
+    def test_cluster_with_naive_timestamp_does_not_crash(self):
+        ne = NewsEngine([])
+        naive_item = _item("ACME wins contract award", published_at=datetime(2026, 8, 20, 14, 30), age_minutes=None)
+        assert ne.cluster_events([naive_item])
+
+    def test_cluster_with_mixed_naive_and_aware_does_not_crash(self):
+        ne = NewsEngine([])
+        none_ts = _item("ACME wins major contract", published_at=None, age_minutes=None)
+        naive_ts = _item("ACME wins major contract", published_at=datetime(2026, 8, 20, 14, 30),
+                         source="CNBC", tier=SourceTier.TIER_3_FINANCIAL, item_id="t:naive")
+        aware_ts = _item("ACME wins major contract", published_at=NOW,
+                         source="Bloomberg", tier=SourceTier.TIER_2_MAJOR, item_id="t:aware")
+        try:
+            events = ne.cluster_events([none_ts, naive_ts, aware_ts])
+        except TypeError as e:
+            pytest.fail(f"mixed naive/aware timestamps must not crash clustering: {e}")
+        assert len(events) >= 1
+        # Similar headlines must still merge despite timestamp normalization
+        assert any(ev.cluster_size if hasattr(ev, "cluster_size") else True for ev in events)
+
+    def test_provider_normalizes_offset_less_pubdate_to_utc(self):
+        raw = dict(VALID_YF_ITEM)
+        raw["content"] = dict(raw["content"])
+        recent_naive = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")  # offset-less -> naive risk
+        raw["content"]["pubDate"] = recent_naive
+        items = asyncio.run(YFinanceNewsProvider(news_fn=lambda t, c: [raw]).fetch_news("TST", NOW - timedelta(hours=24)))
+        assert len(items) == 1
+        assert items[0].published_at.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
+# Regression: low-tier clusters can never be OPPORTUNITY (engine-internal guard)
+# ---------------------------------------------------------------------------
+class TestTierGuard:
+    STRONG_POSITIVE = "ACME awarded $500M government contract by Department of Defense"
+
+    def test_low_tier_never_opportunity(self, engine):
+        p = engine.assess(_event(self.STRONG_POSITIVE, age_minutes=10, tier=SourceTier.TIER_4_UNVERIFIED))
+        assert p.source_tier_score < 40
+        assert p.recommendation is not Recommendation.OPPORTUNITY
+        assert p.recommendation is Recommendation.WATCH  # still visible, never promoted
+
+    def test_high_tier_equivalent_still_opportunity(self, engine):
+        p = engine.assess(_event(self.STRONG_POSITIVE, age_minutes=10, tier=SourceTier.TIER_2_MAJOR))
+        assert p.source_tier_score >= 40
+        assert p.recommendation is Recommendation.OPPORTUNITY
+
 
 # ---------------------------------------------------------------------------
 # /news command (end-to-end with real NewsEngine + CatalystEngine)

@@ -223,7 +223,12 @@ class CatalystEngine:
 
         if profile.is_trap_risk:
             profile.recommendation = Recommendation.TRAP_RISK
-        elif profile.sentiment is SentimentLabel.POSITIVE and profile.materiality >= 60 and profile.freshness in (FreshnessBucket.BREAKING, FreshnessBucket.RECENT):
+        elif (
+            profile.source_tier_score >= 40
+            and profile.sentiment is SentimentLabel.POSITIVE
+            and profile.materiality >= 60
+            and profile.freshness in (FreshnessBucket.BREAKING, FreshnessBucket.RECENT)
+        ):
             profile.recommendation = Recommendation.OPPORTUNITY
         elif profile.materiality >= 40:
             profile.recommendation = Recommendation.WATCH

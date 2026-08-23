@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from difflib import SequenceMatcher
 
-from models.news import NewsItem, CatalystEvent, CatalystType, SourceTier
+from models.news import NewsItem, CatalystEvent, CatalystType, SourceTier, ensure_utc
 from core.exceptions import NewsValidationError
 from core.data_confidence import DataQuality
 from utils.logger import LOGGER
@@ -39,14 +39,16 @@ class NewsEngine:
             return []
 
         clusters: List[List[NewsItem]] = []
-        sorted_items = sorted(items, key=lambda x: x.published_at or datetime.min.replace(tzinfo=timezone.utc))
+        sorted_items = sorted(items, key=lambda x: ensure_utc(x.published_at) or datetime.min.replace(tzinfo=timezone.utc))
 
         for item in sorted_items:
             placed = False
             for cluster in clusters:
                 representative = cluster[0]
                 if item.published_at and representative.published_at:
-                    time_diff = abs((item.published_at - representative.published_at).total_seconds())
+                    item_ts = ensure_utc(item.published_at)
+                    rep_ts = ensure_utc(representative.published_at)
+                    time_diff = abs((item_ts - rep_ts).total_seconds())
                     if time_diff > 4 * 3600:
                         continue
                 sim = SequenceMatcher(None, item.headline.lower(), representative.headline.lower()).ratio()
