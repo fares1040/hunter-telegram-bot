@@ -150,3 +150,16 @@ Hunter now searches the market instead of only scanning a fixed watchlist:
 5. **Integration**: scheduler merges the ranked candidate pool into each scan pass (`max_scan_batch` capped); `/discover` command shows the pool without auto-alerting.
 
 Known limits (documented, by design): delayed data, extended-hours screener coverage not guaranteed, Polygon real-time snapshot/gainer endpoints are paid-tier — a `PolygonUniverseProvider` can slot in behind the same interface later.
+
+## Version 2.4.0 — Phase 2.6: Catalyst Intelligence Engine
+
+Every news event now gets a deterministic, explainable intelligence profile before the optional AI layer runs:
+
+1. **Normalized catalyst model** (`models/catalyst.py`): `CatalystProfile` strictly separates REAL data (headline/source/tier/url/published_at), INFERENCE (category, sentiment, confidence) and SCORES (materiality + transparent breakdown). The LLM may refine an event afterwards but never overwrites these computed values.
+2. **CatalystEngine** (`engines/catalyst_engine.py`): rule-based classification (earnings/guidance, FDA, contracts, partnerships, M&A, analyst actions, offerings/dilution/bankruptcy, SEC filings, compliance), sentiment voting with MIXED detection, freshness buckets (BREAKING ≤30m / RECENT ≤120m / AGING ≤360m / STALE), and a 0–100 materiality score assembled from five visible components: category weight + source quality + freshness + financial figures in headline + multi-source corroboration.
+3. **Trap-risk flags**: offering/dilution/bankruptcy headlines are auto-flagged `TRAP_RISK`; stale high-materiality events get an explicit "may already be priced in" warning; these flow into the decision engine's trap warnings.
+4. **Real no-key news source** (`providers/news/yfinance_provider.py`): Yahoo Finance news via yfinance — always registered alongside Finnhub; publisher→tier mapping mirrors existing conventions; malformed items skipped, never fabricated. Documented limit: Yahoo is an aggregator with retail skew, so its TIER_4 items are routinely rejected by the material gate — by design.
+5. **`/news TICKER` command**: shows top catalysts with recommendation (OPPORTUNITY/WATCH/TRAP_RISK/NEUTRAL), age bucket, per-component materiality math and source links — deterministic output only.
+6. **Fix**: `cluster_events` crashed when any article lacked a timestamp (naive-vs-aware datetime sort); now handled. `CatalystType` extended additively (GUIDANCE, DILUTION, BANKRUPTCY, REGULATORY, CLINICAL_TRIAL).
+
+203 tests passing.

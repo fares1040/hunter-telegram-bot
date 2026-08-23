@@ -9,6 +9,18 @@ def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalize any datetime to timezone-aware UTC.
+
+    Naive datetimes are assumed to be UTC (same convention as
+    NewsItem.age_minutes). None passes through unchanged. This keeps mixed
+    naive/aware collections safe to compare, subtract and sort.
+    """
+    if dt is None or dt.tzinfo is not None:
+        return dt
+    return dt.replace(tzinfo=timezone.utc)
+
+
 class SourceTier(Enum):
     TIER_1_OFFICIAL = 1
     TIER_2_MAJOR = 2
@@ -30,6 +42,11 @@ class CatalystType(Enum):
     DOWNGRADE = "DOWNGRADE"
     SEC_FILING = "SEC_FILING"
     OFFERING = "OFFERING"
+    GUIDANCE = "GUIDANCE"
+    DILUTION = "DILUTION"
+    BANKRUPTCY = "BANKRUPTCY"
+    REGULATORY = "REGULATORY"
+    CLINICAL_TRIAL = "CLINICAL_TRIAL"
     OTHER = "OTHER"
 
 

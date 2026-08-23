@@ -1,5 +1,7 @@
 """Interactive Telegram command interface for Hunter Bot."""
 import functools
+import html
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -21,6 +23,7 @@ HELP_TEXT = (
     "/watchlist — Show watchlist\n"
     "/status — Market session, providers, last scan\n"
     "/stats — Alert memory statistics\n"
+    "/news TICKER — Catalyst breakdown from real news (deterministic)\n"
     "/help — This message"
 )
 
@@ -66,6 +69,7 @@ class TelegramCommandBot:
             "status": self.cmd_status,
             "stats": self.cmd_stats,
             "discover": self.cmd_discover,
+            "news": self.cmd_news,
         }
         for name, cb in routes.items():
             app.add_handler(CommandHandler(name, cb))
@@ -221,6 +225,49 @@ class TelegramCommandBot:
                 lines.append(f"• ${a['ticker']} | {a['decision']} | {a['score']}/100")
         else:
             lines.append("No alerts recorded yet.")
+        await self._reply(update, "\n".join(lines))
+
+    @_authorized
+    async def cmd_news(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        args = (context.args if context else []) or []
+        if not args:
+            raise ValueError("Usage: /news TICKER")
+        ticker = args[0].upper().strip()
+        raw_news = await self.orchestrator.news_engine.gather_news(ticker, max_age_hours=24)
+        if not raw_news:
+            await self._reply(update, f"📭 No recent news found for <b>{html.escape(ticker)}</b>")
+            return
+        engine = self.orchestrator.news_engine
+        events = engine.filter_material_events(engine.cluster_events(raw_news))
+        if not events:
+            await self._reply(update, f"📭 No material events for <b>{html.escape(ticker)}</b> in the last 24h")
+            return
+        profiles = [self.orchestrator.catalyst_engine.enrich(event) for event in events[:3]]
+        lines = [
+            f"📰 <b>{html.escape(ticker)}</b> — catalysts from real news (last 24h)",
+            "",
+        ]
+        for i, p in enumerate(profiles, 1):
+            age = f"{int(p.age_minutes)}m ago" if p.age_minutes is not None else "age unknown"
+            corr = p.cluster_size > 1 and f" | {p.cluster_size} sources" or ""
+            lines.append(
+                f"{i}. <b>[{p.recommendation.value}]</b> {p.materiality}/100 — {p.freshness.value} ({age}){corr}"
+            )
+            lines.append(f"   “{html.escape(p.headline[:180])}”")
+            lines.append(
+                f"   Category: {p.category} | Sentiment: {p.sentiment.value} ({p.classification_confidence}%)"
+            )
+            bd = p.materiality_breakdown
+            lines.append(
+                f"   Materiality: cat {bd.get('category', 0)} + source {bd.get('source_quality', 0)}"
+                f" + fresh {bd.get('freshness', 0)} + figures {bd.get('figures', 0)} + corroborated {bd.get('corroboration', 0)}"
+            )
+            if p.trap_reasons:
+                lines.append(f"   ⚠️ Trap flags: {'; '.join(html.escape(r) for r in p.trap_reasons)}")
+            if p.url:
+                lines.append(f"   {html.escape(p.url)}")
+            lines.append("")
+        lines.append("🧠 Deterministic analysis. AI may refine scores during scans; no fabricated data.")
         await self._reply(update, "\n".join(lines))
 
     @staticmethod
