@@ -23,6 +23,7 @@ from engines.market_reaction_engine import MarketReactionEngine
 from engines.liquidity_proxy import LiquidityProxyEngine
 from engines.technical_engine import TechnicalEngine
 from engines.intraday_engine import IntradayEngine
+from engines.swing_engine import SwingEngine
 from engines.decision_engine import DecisionEngine
 from engines.options_engine import OptionsEngine
 from engines.risk_engine import RiskEngine
@@ -47,7 +48,7 @@ class HunterOrchestrator:
         self.news_engine = NewsEngine(self.news_providers)
         self.catalyst_engine = CatalystEngine()
         self.candidate_gate = CandidateGate()
-        self.reaction_engine = MarketReactionEngine(); self.liquidity_engine = LiquidityProxyEngine(); self.technical_engine = TechnicalEngine(); self.intraday_engine = IntradayEngine()
+        self.reaction_engine = MarketReactionEngine(); self.liquidity_engine = LiquidityProxyEngine();         self.technical_engine = TechnicalEngine(); self.intraday_engine = IntradayEngine(); self.swing_engine = SwingEngine()
         self.options_engine = OptionsEngine(); self.risk_engine = RiskEngine(); self.trap_engine = TrapEngine(); self.decision_engine = DecisionEngine(); self.ai_analyzer = AIAnalyzer()
         self.memory = SignalMemory(SETTINGS.memory_db_path)
         self.market_context_engine = MarketContextEngine()
@@ -95,7 +96,17 @@ class HunterOrchestrator:
             trap_warnings=trap_warnings,
         )
         confidence = self._build_confidence(data, event, technical, options)
-        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence, intraday_intelligence=intraday_intelligence)
+        swing_intelligence = self.swing_engine.build(
+            data,
+            daily_history=history,
+            technical_intelligence=technical.intelligence,
+            catalyst_event=event,
+            catalyst_profile=catalyst_profile,
+            intraday_intelligence=intraday_intelligence,
+            trap_risk=trap_risk,
+            trap_warnings=trap_warnings,
+        )
+        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence, intraday_intelligence=intraday_intelligence, swing_intelligence=swing_intelligence)
         key = f"{ticker}:{event.event_id}"
         if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
