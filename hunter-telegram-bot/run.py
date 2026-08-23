@@ -83,7 +83,7 @@ class HunterOrchestrator:
         if catalyst_profile.is_trap_risk:
             trap_warnings = list(trap_warnings) + [f"CATALYST: {reason}" for reason in catalyst_profile.trap_reasons]
         confidence = self._build_confidence(data, event, technical, options)
-        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context)
+        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence)
         key = f"{ticker}:{event.event_id}"
         if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
