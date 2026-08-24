@@ -167,3 +167,20 @@ def test_deterministic_output():
     assert a.tp1.zone.zone_low == b.tp1.zone.zone_low
     assert a.score.total == b.score.total
     assert a.confidence.value == b.confidence.value
+
+
+def test_cross_direction_levels_do_not_merge():
+    eng = _eng()
+    sw = _swing([_res(220.0, 5.0, strength=90), _sup(207.0, -3.0, strength=90)])
+    # SHORT entry: only supports below entry are valid SHORT targets
+    r = eng.build(swing=sw, entry_price=214.0, invalidation=216.0)
+    assert r.direction == "SHORT"
+    assert r.tp1 is not None
+    assert r.tp1.zone.zone_high < 214.0
+    assert "RESISTANCE" not in r.tp1.zone.source_type
+    # LONG entry: only resistances above entry are valid LONG targets
+    r2 = eng.build(swing=sw, entry_price=214.0, invalidation=212.0)
+    assert r2.direction == "LONG"
+    assert r2.tp1 is not None
+    assert r2.tp1.zone.zone_low > 214.0
+    assert "SUPPORT" not in r2.tp1.zone.source_type

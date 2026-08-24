@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any
 from datetime import datetime, timezone
 from enum import Enum
+from models.target import TargetResult
 
 
 def _utc_now() -> datetime:
@@ -57,6 +58,7 @@ class HunterSignal:
     target_2: Optional[float] = None
     target_3: Optional[float] = None
     reward_to_risk: Optional[float] = None
+    target_result: Optional[TargetResult] = None
     position_size: Optional[int] = None
     trap_risk: int = 0
     warnings: List[str] = field(default_factory=list)
