@@ -18,7 +18,7 @@ class DecisionEngine:
     def __init__(self):
         self.scorer = CompositeScoringEngine()
 
-    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None):
+    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None, target_result=None):
         options = options or OptionsFlowProfile()
         risk_plan = risk_plan or RiskPlan(valid=True, confidence=70)
         trap_warnings = trap_warnings or []
@@ -60,6 +60,23 @@ class DecisionEngine:
             if swing_intelligence.trap_flags:
                 note += " | flags:" + ",".join(swing_intelligence.trap_flags)
             signal.warnings.append(note)
+        signal.target_result = target_result
+        if target_result is not None:
+            t = target_result
+            parts = [f"TARGETS[{t.direction}] status={t.status}"]
+            if t.tp1:
+                parts.append(f"TP1={t.tp1.zone.zone_low}-{t.tp1.zone.zone_high}({t.tp1.zone.source_type})")
+            if t.tp2:
+                parts.append(f"TP2={t.tp2.zone.zone_low}-{t.tp2.zone.zone_high}({t.tp2.zone.source_type})")
+            if t.tp3:
+                parts.append(f"TP3={t.tp3.zone.zone_low}-{t.tp3.zone.zone_high}({t.tp3.zone.source_type})")
+            if t.risk_reward is not None:
+                parts.append(f"RR={t.risk_reward:.2f}")
+            if t.score is not None:
+                parts.append(f"tgt_score={t.score.total}")
+            if t.confidence is not None:
+                parts.append(f"tgt_conf={t.confidence.value}")
+            signal.warnings.append(" | ".join(parts))
         if options.contract_candidate:
             c = options.contract_candidate
             signal.contract_symbol = c.contract_symbol

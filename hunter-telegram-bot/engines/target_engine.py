@@ -229,6 +229,8 @@ class TargetEngine:
                 if j in used:
                     continue
                 c2 = candidates[j]
+                if c2.zone.direction != c1.zone.direction:
+                    continue
                 w2 = c2.zone.zone_high - c2.zone.zone_low
                 if abs(c1.zone.distance - c2.zone.distance) <= (w1 + w2) / 2:
                     cluster.append(c2)

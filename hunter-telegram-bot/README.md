@@ -83,6 +83,14 @@ The alert is designed around decision quality, not UI:
 - Contract candidate when available.
 - Trap warnings.
 
+### 13. Target Intelligence (Phase 2.10)
+- Zone-based take-profit targets (`zone_low`/`zone_high`), never single magical prices.
+- Consumes `SwingIntelligence`, `TechnicalIntelligence` and `IntradayIntelligence` plus the real entry/invalidation — additive, zero new network calls.
+- Targets derive ONLY from real structural levels (swing pivots, S/R, VWAP, opening-range, ATR projection); no fabricated percentage targets.
+- TP1/TP2/TP3 are ranked and clustered; risk/reward, a separate quality `Score` and `Confidence` are computed.
+- Gated by a valid entry + invalidation; returns honest `UNAVAILABLE` when no structural target exists.
+- Wired into the orchestrator and passed to `DecisionEngine`; surfaced as a distinct `TARGET INTELLIGENCE` block in Telegram alerts. `DecisionEngine` remains the sole final authority.
+
 ## Data-provider reality
 - **yfinance:** free fallback and option-chain fallback; not guaranteed real-time.
 - **Finnhub:** news when configured.
@@ -182,3 +190,17 @@ Raw market data is now turned into structured, explainable technical intelligenc
 Known limitations: RVOL depends on provider-supplied session volume/avg-volume fields (honestly None when absent); divergence detection intentionally conservative; multi-timeframe execution deferred until intraday resampling lands.
 
 252 tests passing (208 preserved + 44 new).
+
+## Version 2.10.0 — Phase 2.10: Target Intelligence (Final Integration)
+
+Deterministic, explainable take-profit zones, integrated end-to-end:
+
+1. **Models** (`models/target.py`): `TargetZone`, `Target`, `TargetScore`, `TargetScoreComponent`, `TargetConfidence`, `TargetResult`.
+2. **Engine** (`engines/target_engine.py`): additive `TargetEngine` that consumes `SwingIntelligence`, `TechnicalIntelligence` and `IntradayIntelligence` plus the real entry/invalidation. Targets are zones, never single prices.
+3. **Structural sources only**: swing pivots, major S/R, VWAP, opening-range breakout/breakdown, and ATR projection. No fabricated percentage targets.
+4. **Ranking + clustering**: TP1/TP2/TP3 ranked by confidence/strength/distance and clustered per direction (LONG/SHORT never merge into one zone); risk/reward, a separate quality `Score` and `Confidence` are computed.
+5. **Honesty gate**: returns `UNAVAILABLE` when no valid structural target or no valid entry/invalidation — never invents a level.
+6. **Wiring** (`run.py` → `DecisionEngine`): the orchestrator builds `TargetResult` from the real `SwingEntry` (entry zone + invalidation) and passes it to `DecisionEngine.decide()`, which attaches it to `HunterSignal` and surfaces it as a distinct `TARGET INTELLIGENCE` block in Telegram. `DecisionEngine` remains the sole final authority; targets do not alter the decision.
+7. **Validation**: 329 tests passing; deterministic + full-chain integration tests cover object flow, target safety ordering, decision authority, and missing-data degradation.
+
+Final QA: all engines integrated, no fabricated data/targets, scores remain explainable and separate, causality-preserving, scheduler/commands/authorization unchanged, secrets audit clean.

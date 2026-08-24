@@ -24,6 +24,7 @@ from engines.liquidity_proxy import LiquidityProxyEngine
 from engines.technical_engine import TechnicalEngine
 from engines.intraday_engine import IntradayEngine
 from engines.swing_engine import SwingEngine
+from engines.target_engine import TargetEngine
 from engines.decision_engine import DecisionEngine
 from engines.options_engine import OptionsEngine
 from engines.risk_engine import RiskEngine
@@ -49,7 +50,7 @@ class HunterOrchestrator:
         self.catalyst_engine = CatalystEngine()
         self.candidate_gate = CandidateGate()
         self.reaction_engine = MarketReactionEngine(); self.liquidity_engine = LiquidityProxyEngine();         self.technical_engine = TechnicalEngine(); self.intraday_engine = IntradayEngine(); self.swing_engine = SwingEngine()
-        self.options_engine = OptionsEngine(); self.risk_engine = RiskEngine(); self.trap_engine = TrapEngine(); self.decision_engine = DecisionEngine(); self.ai_analyzer = AIAnalyzer()
+        self.options_engine = OptionsEngine(); self.risk_engine = RiskEngine(); self.trap_engine = TrapEngine(); self.decision_engine = DecisionEngine(); self.ai_analyzer = AIAnalyzer(); self.target_engine = TargetEngine()
         self.memory = SignalMemory(SETTINGS.memory_db_path)
         self.market_context_engine = MarketContextEngine()
         self.notifier = TelegramNotifier(SETTINGS.telegram_bot_token, SETTINGS.telegram_chat_id)
@@ -106,7 +107,23 @@ class HunterOrchestrator:
             trap_risk=trap_risk,
             trap_warnings=trap_warnings,
         )
-        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence, intraday_intelligence=intraday_intelligence, swing_intelligence=swing_intelligence)
+        target_result = None
+        swing_entry = getattr(swing_intelligence, "entry", None)
+        entry_price = swing_entry.entry_zone_low if swing_entry else None
+        invalidation = swing_entry.invalidation_price if swing_entry else None
+        if entry_price and invalidation:
+            try:
+                target_result = self.target_engine.build(
+                    swing=swing_intelligence,
+                    technical=technical.intelligence,
+                    intraday=intraday_intelligence,
+                    entry_price=entry_price,
+                    invalidation=invalidation,
+                )
+            except Exception as e:
+                LOGGER.warning(f"[Pipeline] Target build failed: {e}")
+                target_result = None
+        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence, intraday_intelligence=intraday_intelligence, swing_intelligence=swing_intelligence, target_result=target_result)
         key = f"{ticker}:{event.event_id}"
         if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
