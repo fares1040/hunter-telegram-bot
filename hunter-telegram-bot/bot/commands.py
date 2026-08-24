@@ -193,7 +193,7 @@ class TelegramCommandBot:
     async def cmd_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         session = SessionClock.get_session()
         o = self.orchestrator
-        realtime = getattr(o.market_provider, "is_realtime", lambda: False)()
+        realtime = bool(getattr(o.market_provider, "is_realtime", False))
         news_count = len(o.news_providers)
         ai_on = bool(SETTINGS.openai_api_key)
         lines = [
