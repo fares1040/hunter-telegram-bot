@@ -145,7 +145,7 @@ class HunterOrchestrator:
         r.add("regular_session_data", DataQuality.REAL if data.regular.is_complete else DataQuality.MISSING, 1.5)
         r.add("news_timestamp", DataQuality.REAL if event.primary_source.published_at else DataQuality.MISSING, 1.0)
         r.add("technical_indicators", DataQuality.PROXY if technical.ma20 else DataQuality.MISSING, 1.0)
-        r.add("options_chain", DataQuality.PROXY if options.available else DataQuality.MISSING, 1.0)
+        r.add("options_chain", DataQuality.PROXY if options.source != "none" else DataQuality.MISSING, 1.0)
         return r
 
     def _error_signal(self, ticker, reason):
