@@ -1,6 +1,7 @@
 """Hunter Bot — News Engine"""
 import hashlib
 import re
+import time
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from difflib import SequenceMatcher
@@ -12,9 +13,13 @@ from utils.logger import LOGGER
 
 
 class NewsEngine:
+    # Cache configuration: max entries and TTL (seconds)
+    _CACHE_MAX_SIZE = 1000
+    _CACHE_TTL_SECONDS = 3600  # 1 hour
+
     def __init__(self, providers: List):
         self.providers = providers
-        self._event_cache: Dict[str, CatalystEvent] = {}
+        self._event_cache: Dict[str, tuple[CatalystEvent, float]] = {}  # event_id -> (event, timestamp)
 
     async def gather_news(self, ticker: str, max_age_hours: float = 24.0) -> List[NewsItem]:
         since = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
@@ -65,9 +70,11 @@ class NewsEngine:
             others = [i for i in cluster if i.id != primary.id]
 
             event_id = self._generate_event_id(primary)
+            now = time.time()
             if event_id in self._event_cache:
-                existing = self._event_cache[event_id]
+                existing, _ = self._event_cache[event_id]
                 existing.additional_sources.extend(others)
+                self._event_cache[event_id] = (existing, now)
                 events.append(existing)
                 continue
 
@@ -80,7 +87,8 @@ class NewsEngine:
                 additional_sources=others,
             )
             self._score_event_basics(event)
-            self._event_cache[event_id] = event
+            self._event_cache[event_id] = (event, now)
+            self._evict_expired_cache(now)
             events.append(event)
 
         return events
@@ -108,6 +116,24 @@ class NewsEngine:
             event.freshness_score = 0
         else:
             event.freshness_score = int(100 - ((age - 30) / 210) * 100)
+
+    def _evict_expired_cache(self, now: float) -> None:
+        """Remove expired entries and enforce max cache size."""
+        # Remove expired entries (older than TTL)
+        expired_keys = [
+            k for k, (_, ts) in self._event_cache.items()
+            if now - ts > self._CACHE_TTL_SECONDS
+        ]
+        for k in expired_keys:
+            del self._event_cache[k]
+
+        # If still over max size, remove oldest entries
+        if len(self._event_cache) > self._CACHE_MAX_SIZE:
+            # Sort by timestamp and remove oldest
+            sorted_items = sorted(self._event_cache.items(), key=lambda x: x[1][1])
+            excess = len(self._event_cache) - self._CACHE_MAX_SIZE
+            for k, _ in sorted_items[:excess]:
+                del self._event_cache[k]
 
     def filter_material_events(self, events: List[CatalystEvent], min_tier_score: int = 40) -> List[CatalystEvent]:
         filtered = []

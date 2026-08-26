@@ -22,6 +22,7 @@ from core.session_clock import SessionClock, MarketSession
 from core.exceptions import ProviderError, DataInsufficientError
 from utils.retry import async_retry
 from utils.logger import LOGGER
+from providers.market_data.yfinance_concurrency import get_yfinance_semaphore
 
 
 class YFinanceProvider(MarketDataProvider):
@@ -36,19 +37,20 @@ class YFinanceProvider(MarketDataProvider):
         anchor = timestamp or SessionClock.now()
         anchor_et = SessionClock.localize(anchor)
 
-        loop = asyncio.get_event_loop()
-        try:
-            stock = await asyncio.to_thread(yf.Ticker, ticker)
-        except Exception as e:
-            raise ProviderError(f"yfinance init failed: {e}", provider=self.name, retryable=True)
+        async with get_yfinance_semaphore():
+            loop = asyncio.get_event_loop()
+            try:
+                stock = await asyncio.to_thread(yf.Ticker, ticker)
+            except Exception as e:
+                raise ProviderError(f"yfinance init failed: {e}", provider=self.name, retryable=True)
 
-        try:
-            hist_1m = await loop.run_in_executor(
-                None,
-                lambda: stock.history(period="5d", interval="1m", prepost=True)
-            )
-        except Exception as e:
-            raise ProviderError(f"yfinance history failed: {e}", provider=self.name, retryable=True)
+            try:
+                hist_1m = await loop.run_in_executor(
+                    None,
+                    lambda: stock.history(period="5d", interval="1m", prepost=True)
+                )
+            except Exception as e:
+                raise ProviderError(f"yfinance history failed: {e}", provider=self.name, retryable=True)
 
         if hist_1m.empty:
             raise DataInsufficientError(f"No price data for {ticker}")

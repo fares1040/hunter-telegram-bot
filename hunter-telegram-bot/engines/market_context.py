@@ -5,6 +5,8 @@ import asyncio
 import pandas as pd
 import yfinance as yf
 
+from providers.market_data.yfinance_concurrency import get_yfinance_semaphore
+
 @dataclass
 class MarketContext:
     regime: str = "UNKNOWN"
@@ -59,33 +61,35 @@ class MarketContextEngine:
         return ctx
 
     async def _daily_change(self, symbol: str):
-        def pull():
-            df = yf.Ticker(symbol).history(period="5d", interval="1d")
-            if len(df) < 2:
-                return None
-            return float((df["Close"].iloc[-1]/df["Close"].iloc[-2]-1)*100)
-        return await asyncio.to_thread(pull)
+        async with get_yfinance_semaphore():
+            def pull():
+                df = yf.Ticker(symbol).history(period="5d", interval="1d")
+                if len(df) < 2:
+                    return None
+                return float((df["Close"].iloc[-1]/df["Close"].iloc[-2]-1)*100)
+            return await asyncio.to_thread(pull)
 
     async def _infer_sector(self, ticker: str) -> str:
-        def pull():
-            try:
-                info = yf.Ticker(ticker).info
-                sector = (info.get("sector") or "").upper()
-                industry = (info.get("industry") or "").upper()
-                if "SEMICONDUCTOR" in industry:
-                    return "SEMICONDUCTORS"
-                if "BIOTECH" in industry or "BIOTECH" in sector:
-                    return "BIOTECH"
-                mapping = {
-                    "TECHNOLOGY":"TECHNOLOGY", "HEALTHCARE":"HEALTHCARE",
-                    "FINANCIAL SERVICES":"FINANCIALS", "ENERGY":"ENERGY",
-                    "COMMUNICATION SERVICES":"COMMUNICATION",
-                    "CONSUMER CYCLICAL":"CONSUMER_DISCRETIONARY",
-                    "INDUSTRIALS":"INDUSTRIALS", "REAL ESTATE":"REAL_ESTATE",
-                    "UTILITIES":"UTILITIES", "CONSUMER DEFENSIVE":"CONSUMER_STAPLES",
-                    "BASIC MATERIALS":"MATERIALS",
-                }
-                return mapping.get(sector, "UNKNOWN")
-            except Exception:
-                return "UNKNOWN"
-        return await asyncio.to_thread(pull)
+        async with get_yfinance_semaphore():
+            def pull():
+                try:
+                    info = yf.Ticker(ticker).info
+                    sector = (info.get("sector") or "").upper()
+                    industry = (info.get("industry") or "").upper()
+                    if "SEMICONDUCTOR" in industry:
+                        return "SEMICONDUCTORS"
+                    if "BIOTECH" in industry or "BIOTECH" in sector:
+                        return "BIOTECH"
+                    mapping = {
+                        "TECHNOLOGY":"TECHNOLOGY", "HEALTHCARE":"HEALTHCARE",
+                        "FINANCIAL SERVICES":"FINANCIALS", "ENERGY":"ENERGY",
+                        "COMMUNICATION SERVICES":"COMMUNICATION",
+                        "CONSUMER CYCLICAL":"CONSUMER_DISCRETIONARY",
+                        "INDUSTRIALS":"INDUSTRIALS", "REAL ESTATE":"REAL_ESTATE",
+                        "UTILITIES":"UTILITIES", "CONSUMER DEFENSIVE":"CONSUMER_STAPLES",
+                        "BASIC MATERIALS":"MATERIALS",
+                    }
+                    return mapping.get(sector, "UNKNOWN")
+                except Exception:
+                    return "UNKNOWN"
+            return await asyncio.to_thread(pull)

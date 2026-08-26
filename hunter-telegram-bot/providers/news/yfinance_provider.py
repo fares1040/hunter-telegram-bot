@@ -13,10 +13,10 @@ import asyncio
 from datetime import datetime, timezone
 from typing import List, Optional
 
-
 from providers.news.base_provider import NewsProvider
 from models.news import NewsItem, SourceTier, ensure_utc
 from utils.logger import LOGGER
+from providers.market_data.yfinance_concurrency import get_yfinance_semaphore
 
 
 SOURCE_TIER_MAP = {
@@ -63,11 +63,12 @@ class YFinanceNewsProvider(NewsProvider):
         return SOURCE_TIER_MAP.get(source, DEFAULT_TIER)
 
     async def fetch_news(self, ticker: str, since) -> List[NewsItem]:
-        try:
-            raw_items = await asyncio.to_thread(self._news_fn, ticker, 20)
-        except Exception as e:
-            LOGGER.warning(f"[{self.name}] fetch failed for {ticker}: {e}")
-            return []
+        async with get_yfinance_semaphore():
+            try:
+                raw_items = await asyncio.to_thread(self._news_fn, ticker, 20)
+            except Exception as e:
+                LOGGER.warning(f"[{self.name}] fetch failed for {ticker}: {e}")
+                return []
 
         items: List[NewsItem] = []
         if not isinstance(raw_items, list):
@@ -106,9 +107,10 @@ class YFinanceNewsProvider(NewsProvider):
         )
 
     async def health_check(self) -> bool:
-        try:
-            items = await asyncio.to_thread(self._news_fn, "AAPL", 1)
-            return isinstance(items, list)
-        except Exception as e:
-            LOGGER.warning(f"[{self.name}] health check failed: {e}")
-            return False
+        async with get_yfinance_semaphore():
+            try:
+                items = await asyncio.to_thread(self._news_fn, "AAPL", 1)
+                return isinstance(items, list)
+            except Exception as e:
+                LOGGER.warning(f"[{self.name}] health check failed: {e}")
+                return False
