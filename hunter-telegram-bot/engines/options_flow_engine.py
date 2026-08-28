@@ -46,6 +46,8 @@ class OptionsFlowEngine:
         options_snapshot: Optional[OptionsSnapshot],
         underlying_price: Optional[float],
         technical_intelligence=None,
+        true_flow_trades: Optional[List] = None,
+        true_flow_max_age: int = 30,
     ) -> OptionsFlowIntelligence:
         """Build options flow intelligence from real chain data."""
         result = OptionsFlowIntelligence()
@@ -99,6 +101,23 @@ class OptionsFlowEngine:
 
         # Find contract candidate
         result.contract_candidate = self._find_best_contract(contracts, underlying_price)
+
+        # Additive True Flow aggregation (never double-count with snapshot volume)
+        if true_flow_trades:
+            try:
+                from models.option_realtime import aggregate_true_flow
+                tf = aggregate_true_flow(true_flow_trades, max_age=true_flow_max_age)
+                # Attach as additive evidence — do not overwrite snapshot metrics
+                if tf.total_trades > 0:
+                    result.notes.append(f"TRUE_FLOW: {tf.call_trades}C/{tf.put_trades}P trades call_prem={tf.call_premium:.0f} put_prem={tf.put_premium:.0f} largest={tf.largest_contract or 'none'}:{tf.largest_premium:.0f}")
+                    if tf.large_prints:
+                        result.notes.append(f"TRUE_FLOW large_prints={len(tf.large_prints)}")
+                    if tf.repeated_contracts:
+                        result.notes.append(f"TRUE_FLOW repeated={len(tf.repeated_contracts)} contracts")
+                    # Store on result for downstream consumers (additive field)
+                    result.warnings.append(f"TRUE_FLOW provenance={tf.source} FRESH only")
+            except Exception as e:
+                LOGGER.warning(f"[OptionsFlow] true flow aggregation failed: {e}")
 
         return self._finalize_intelligence(result)
 

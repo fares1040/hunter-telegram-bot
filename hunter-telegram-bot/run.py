@@ -54,7 +54,14 @@ class HunterOrchestrator:
                 self.market_provider: MarketDataProvider = PolygonProvider(SETTINGS.polygon_api_key)
         else:
             self.market_provider: MarketDataProvider = YFinanceProvider()
-        self.options_provider = PolygonOptionsProvider(SETTINGS.polygon_api_key) if SETTINGS.has_polygon else YFinanceOptionsProvider()
+        if SETTINGS.has_polygon:
+            try:
+                from providers.market_data.polygon_options_realtime_provider import PolygonOptionsRealtimeProvider
+                self.options_provider = PolygonOptionsRealtimeProvider(SETTINGS.polygon_api_key)
+            except Exception:
+                self.options_provider = PolygonOptionsProvider(SETTINGS.polygon_api_key)
+        else:
+            self.options_provider = YFinanceOptionsProvider()
         self.news_providers: List[NewsProvider] = ([FinnhubNewsProvider()] if SETTINGS.has_finnhub else []) + [YFinanceNewsProvider()]
         self.news_engine = NewsEngine(self.news_providers)
         self.catalyst_engine = CatalystEngine()
@@ -122,10 +129,17 @@ class HunterOrchestrator:
         liquidity = self.liquidity_engine.analyze(data, quotes=realtime_quotes, trades=realtime_trades, realtime_max_age_seconds=SETTINGS.realtime_max_age_seconds)
         technical = self.technical_engine.analyze(data, history)
         options_snapshot = await self.options_provider.fetch_options(ticker, data.current_price) if SETTINGS.options_enabled else None
+        # True flow options trades (opt-in)
+        true_option_trades: list = []
+        if SETTINGS.options_flow_realtime_enabled and getattr(self.options_provider, "supports_options_realtime", False):
+            try:
+                true_option_trades = await self.options_provider.fetch_option_trades(ticker, limit=50)  # type: ignore
+            except Exception:
+                true_option_trades = []
         context = await self.market_context_engine.analyze(ticker)
         bullish = event.sentiment in {"POSITIVE", "VERY_POSITIVE"}
         options = self.options_engine.analyze(options_snapshot, data.current_price, bullish=bullish)
-        options_flow = self.options_flow_engine.build(options_snapshot, data.current_price, technical.intelligence)
+        options_flow = self.options_flow_engine.build(options_snapshot, data.current_price, technical.intelligence, true_flow_trades=true_option_trades, true_flow_max_age=SETTINGS.options_flow_realtime_max_age_seconds)
         risk = self.risk_engine.build_plan(data.current_price, technical, SETTINGS.account_size, SETTINGS.risk_per_trade_pct)
         trap_risk, trap_warnings = self.trap_engine.analyze(data, event, reaction, liquidity, technical)
         if catalyst_profile.is_trap_risk:

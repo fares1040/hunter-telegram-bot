@@ -42,3 +42,13 @@ class MarketDataProvider(ABC):
     async def fetch_history(self, ticker: str, period: str = "3mo", interval: str = "1d"):
         """Optional history fetch via provider abstraction. Default: not implemented."""
         raise NotImplementedError(f"{self.name} does not support fetch_history")
+
+    @property
+    def supports_options_realtime(self) -> bool:
+        return False
+
+    async def fetch_option_quotes(self, ticker: str, limit: int = 20):
+        raise NotImplementedError
+
+    async def fetch_option_trades(self, ticker: str, limit: int = 50):
+        raise NotImplementedError

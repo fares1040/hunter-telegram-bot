@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     realtime_enabled: bool = Field(default=False, alias="REALTIME_ENABLED")
     realtime_max_age_seconds: int = Field(default=30, ge=5, le=300, alias="REALTIME_MAX_AGE_SECONDS")
     polygon_ws_enabled: bool = Field(default=False, alias="POLYGON_WS_ENABLED")
+    options_flow_realtime_enabled: bool = Field(default=False, alias="OPTIONS_FLOW_REALTIME_ENABLED")
+    options_flow_realtime_max_age_seconds: int = Field(default=30, ge=5, le=300, alias="OPTIONS_FLOW_REALTIME_MAX_AGE_SECONDS")
 
     @field_validator("log_level")
     @classmethod
