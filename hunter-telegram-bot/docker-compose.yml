@@ -1,0 +1,16 @@
+version: "3.8"
+services:
+  hunter:
+    build: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=America/New_York
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
