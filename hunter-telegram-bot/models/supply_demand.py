@@ -201,3 +201,4 @@ class SupplyDemandResult:
     missing_data: List[str] = field(default_factory=list)
     data_quality: str = "REAL"
     evidence: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
