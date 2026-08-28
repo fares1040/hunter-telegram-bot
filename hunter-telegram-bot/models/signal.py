@@ -65,6 +65,7 @@ class HunterSignal:
     reasoning: str = ""
     data_insufficient_note: Optional[str] = None
     educational_only: bool = True
+    decision2: Optional[Any] = None  # DecisionRationale (additive, backward compat)
 
     @property
     def is_actionable(self) -> bool:

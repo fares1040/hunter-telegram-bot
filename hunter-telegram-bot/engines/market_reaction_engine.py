@@ -16,6 +16,7 @@ class ReactionMetrics:
     volume_ratio: Optional[float]=None; rvol: Optional[float]=None; gap_pct: Optional[float]=None
     vwap_at_news: Optional[float]=None; price_vs_vwap_pct: Optional[float]=None
     reaction_label: str="UNKNOWN"; reaction_score:int=0; data_sufficient:bool=False
+    reaction_timestamp: Optional[datetime]=None  # window end of after_5m (bar-derived, UTC)
 
 class MarketReactionEngine:
     def analyze(self,event: CatalystEvent,ticker_data:TickerData, trades: Optional[list]=None, realtime_max_age_seconds: int=30)->ReactionMetrics:
@@ -61,6 +62,17 @@ class MarketReactionEngine:
                 # Realtime trade volume in the 5m window worth a small confirmation (capped)
                 pass  # Keep bar score authoritative; freshness already validated. Future stage may refine.
 
+        # Reaction timestamp = end of the 5m reaction window (last bar in after5), UTC normalized
+        try:
+            if not after5.empty:
+                ts = after5.index[-1]
+                if hasattr(ts, "to_pydatetime"):
+                    ts = ts.to_pydatetime()
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=datetime.now(timezone.utc).tzinfo)
+                m.reaction_timestamp = ts.astimezone(timezone.utc) if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+        except Exception:
+            m.reaction_timestamp = None
         # Need both price reaction and comparable volume to call the reaction strong.
         m.reaction_score=self._score(m)
         m.reaction_label=self._label(m.reaction_score)

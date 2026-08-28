@@ -146,6 +146,41 @@ class DecisionEngine:
         signal.position_size = risk_plan.position_size
         signal.risk_score = 100 if risk_plan.valid and not risk_plan.warnings else max(0, risk_plan.confidence)
         signal.hunter_score = self.scorer.score(news_quality=signal.news_quality, news_impact=signal.news_impact, reaction=signal.market_reaction, liquidity=signal.liquidity_proxy, technical=signal.technical_structure, options=signal.options_flow, risk=signal.risk_score, market_regime=getattr(signal,"market_regime_score",50), sector_strength=getattr(signal,"sector_strength",50), trap_risk=signal.trap_risk)
+        # Decision 2.0 — additive support (no gate change)
+        try:
+            from engines.decision_support import WhyNowBuilder, ConflictDetector, ConvictionEngine, OpportunityQualityEngine, build_rationale
+            from models.decision import DecisionEvidence
+            # derive realtime freshness
+            catalyst_ts = getattr(event.primary_source, "published_at", None) if hasattr(event, "primary_source") else None
+            reaction_ts = getattr(reaction, "reaction_timestamp", None)
+            fresh_realtime = False
+            why = WhyNowBuilder.build(catalyst_ts, reaction_ts, reaction.reaction_label, fresh_realtime)
+            realtime_bullish = reaction.reaction_label in ("STRONG_POSITIVE_REACTION","POSITIVE_REACTION")
+            options_bullish = "CALL" in signal.options_bias
+            # Freshness from actual evidence: catalyst age, reaction data_sufficient, options freshness
+            catalyst_fresh = "FRESH" if catalyst_ts and event.is_fresh(max_age_minutes=120) else ("UNKNOWN" if not catalyst_ts else "STALE")
+            reaction_fresh = "FRESH" if reaction.data_sufficient else "UNKNOWN" if reaction.reaction_label=="UNKNOWN" else "STALE" if reaction.reaction_label=="DATA_INSUFFICIENT" else "FRESH"
+            options_fresh = getattr(options_flow_intelligence, "freshness", "UNKNOWN") if options_flow_intelligence else "UNKNOWN"
+            stale_critical = catalyst_fresh=="STALE" or reaction_fresh=="STALE" or options_fresh=="STALE" or reaction.reaction_label=="DATA_INSUFFICIENT"
+            unknown_critical = catalyst_fresh=="UNKNOWN" or reaction_fresh=="UNKNOWN"
+            conflicts = ConflictDetector.detect(event.sentiment, reaction.reaction_label, liquidity.status, signal.options_bias, signal.market_regime, trap_risk, realtime_bullish, options_bullish, stale_critical)
+            # Conviction: alignment from hunter_score, quality from data_confidence, freshness/completeness from actual freshness
+            alignment = 80 if signal.hunter_score >= 75 else 60 if signal.hunter_score >= 60 else 30
+            quality = signal.data_confidence  # quality remains confidence as proxy for completeness of snapshot data (already REAL/UNKNOWN tagged in supporting)
+            if stale_critical:
+                freshness = 20
+            elif unknown_critical:
+                freshness = 40
+            else:
+                freshness = 80 if catalyst_fresh=="FRESH" and reaction_fresh=="FRESH" else 50
+            completeness = 70 if signal.data_confidence >= 70 and not unknown_critical else 40
+            conviction = ConvictionEngine.build(alignment, quality, freshness, completeness, conflicts)
+            quality_obj = OpportunityQualityEngine.build(conviction, reaction.reaction_score, liquidity.score, risk_plan.valid, trap_risk, signal.market_regime, not stale_critical)
+            supporting = [DecisionEvidence(name="catalyst", direction="BULLISH" if event.sentiment in ("POSITIVE","VERY_POSITIVE") else "UNKNOWN", quality="REAL" if catalyst_ts else "UNKNOWN", source="catalyst", description=str(event.catalyst_type.value if hasattr(event.catalyst_type,'value') else event.catalyst_type))]
+            risks = list(trap_warnings)[:5]
+            signal.decision2 = build_rationale(supporting, conflicts, risks, why, conviction, quality_obj)
+        except Exception:
+            pass
         if signal.data_confidence < SETTINGS.hunter_min_data_confidence:
             signal.reasoning = f"Data confidence too low ({signal.data_confidence}%)"
             signal.data_insufficient_note = f"Confidence {signal.data_confidence}% < {SETTINGS.hunter_min_data_confidence}%"
