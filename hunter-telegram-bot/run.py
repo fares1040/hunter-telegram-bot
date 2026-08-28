@@ -30,6 +30,9 @@ from engines.options_engine import OptionsEngine
 from engines.risk_engine import RiskEngine
 from engines.trap_engine import TrapEngine
 from engines.market_context import MarketContextEngine
+from engines.supply_demand_engine import SupplyDemandEngine
+from engines.options_flow_engine import OptionsFlowEngine
+from engines.strategy_engine import StrategyEngine
 from ai.analyzer import AIAnalyzer
 from bot.telegram_bot import TelegramNotifier
 from bot.commands import TelegramCommandBot
@@ -51,6 +54,9 @@ class HunterOrchestrator:
         self.candidate_gate = CandidateGate()
         self.reaction_engine = MarketReactionEngine(); self.liquidity_engine = LiquidityProxyEngine();         self.technical_engine = TechnicalEngine(); self.intraday_engine = IntradayEngine(); self.swing_engine = SwingEngine()
         self.options_engine = OptionsEngine(); self.risk_engine = RiskEngine(); self.trap_engine = TrapEngine(); self.decision_engine = DecisionEngine(); self.ai_analyzer = AIAnalyzer(); self.target_engine = TargetEngine()
+        self.supply_demand_engine = SupplyDemandEngine()
+        self.options_flow_engine = OptionsFlowEngine()
+        self.strategy_engine = StrategyEngine()
         self.memory = SignalMemory(SETTINGS.memory_db_path)
         self.market_context_engine = MarketContextEngine()
         self.notifier = TelegramNotifier(SETTINGS.telegram_bot_token, SETTINGS.telegram_chat_id)
@@ -66,6 +72,8 @@ class HunterOrchestrator:
         if not gate.passed:
             return self._ignore_signal(ticker, "Candidate gate rejected: " + ", ".join(gate.reasons))
         history = await self._fetch_history(ticker)
+        weekly_history = await self._fetch_weekly_history(ticker)
+        monthly_history = await self._fetch_monthly_history(ticker)
         raw_news = await self.news_engine.gather_news(ticker, max_age_hours=24)
         if not raw_news:
             return self._ignore_signal(ticker, "No recent news")
@@ -81,6 +89,7 @@ class HunterOrchestrator:
         context = await self.market_context_engine.analyze(ticker)
         bullish = event.sentiment in {"POSITIVE", "VERY_POSITIVE"}
         options = self.options_engine.analyze(options_snapshot, data.current_price, bullish=bullish)
+        options_flow = self.options_flow_engine.build(options_snapshot, data.current_price, technical.intelligence)
         risk = self.risk_engine.build_plan(data.current_price, technical, SETTINGS.account_size, SETTINGS.risk_per_trade_pct)
         trap_risk, trap_warnings = self.trap_engine.analyze(data, event, reaction, liquidity, technical)
         if catalyst_profile.is_trap_risk:
@@ -123,7 +132,38 @@ class HunterOrchestrator:
             except Exception as e:
                 LOGGER.warning(f"[Pipeline] Target build failed: {e}")
                 target_result = None
-        signal = self.decision_engine.decide(data, event, reaction, liquidity, technical, confidence, options, risk, trap_risk, trap_warnings, market_context=context, technical_intelligence=technical.intelligence, intraday_intelligence=intraday_intelligence, swing_intelligence=swing_intelligence, target_result=target_result)
+
+        supply_demand_result = self.supply_demand_engine.build(
+            data,
+            daily_history=history,
+            weekly_history=weekly_history,
+            monthly_history=monthly_history,
+            intraday_intelligence=intraday_intelligence,
+        )
+
+        strategy_result = self.strategy_engine.analyze(
+            data,
+            supply_demand_result,
+            swing_intelligence=swing_intelligence,
+            technical_intelligence=technical.intelligence,
+            intraday_intelligence=intraday_intelligence,
+            catalyst_event=event,
+            catalyst_profile=catalyst_profile,
+            options_intelligence=options_flow,
+        )
+
+        signal = self.decision_engine.decide(
+            data, event, reaction, liquidity, technical, confidence, options, risk,
+            trap_risk, trap_warnings,
+            market_context=context,
+            technical_intelligence=technical.intelligence,
+            intraday_intelligence=intraday_intelligence,
+            swing_intelligence=swing_intelligence,
+            target_result=target_result,
+            supply_demand_result=supply_demand_result,
+            options_flow_intelligence=options_flow,
+            strategy_result=strategy_result,
+        )
         key = f"{ticker}:{event.event_id}"
         if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
@@ -137,6 +177,20 @@ class HunterOrchestrator:
             return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="3mo", interval="1d"))
         except Exception as e:
             LOGGER.warning(f"[History] Failed: {e}"); return None
+
+    async def _fetch_weekly_history(self, ticker: str) -> Optional[pd.DataFrame]:
+        try:
+            import yfinance as yf
+            return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="2y", interval="1wk"))
+        except Exception as e:
+            LOGGER.warning(f"[WeeklyHistory] Failed: {e}"); return None
+
+    async def _fetch_monthly_history(self, ticker: str) -> Optional[pd.DataFrame]:
+        try:
+            import yfinance as yf
+            return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="max", interval="1mo"))
+        except Exception as e:
+            LOGGER.warning(f"[MonthlyHistory] Failed: {e}"); return None
 
     def _build_confidence(self, data, event, technical, options):
         r = DataConfidenceReport(ticker=data.ticker)

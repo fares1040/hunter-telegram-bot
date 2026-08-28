@@ -12,13 +12,16 @@ from core.session_clock import SessionClock
 from config.settings import SETTINGS
 from engines.scoring_engine import CompositeScoringEngine
 from utils.logger import LOGGER
+from models.supply_demand import SupplyDemandResult
+from models.options_flow import OptionsFlowIntelligence
+from models.strategy import StrategyResult
 
 
 class DecisionEngine:
     def __init__(self):
         self.scorer = CompositeScoringEngine()
 
-    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None, target_result=None):
+    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None, target_result=None, supply_demand_result=None, options_flow_intelligence=None, strategy_result=None):
         options = options or OptionsFlowProfile()
         risk_plan = risk_plan or RiskPlan(valid=True, confidence=70)
         trap_warnings = trap_warnings or []
@@ -37,8 +40,13 @@ class DecisionEngine:
         signal.reaction_status = reaction.reaction_label
         signal.liquidity_status = liquidity.status
         signal.technical_structure = technical.setup_score
-        signal.options_flow = options.flow_score
-        signal.options_bias = options.bias
+        # Use RR21 OptionsFlowIntelligence flow_score when available and reliable
+        if options_flow_intelligence is not None and options_flow_intelligence.data_quality in ("REAL", "PROXY", "FRESH"):
+            signal.options_flow = options_flow_intelligence.flow_score
+            signal.options_bias = options_flow_intelligence.bias
+        else:
+            signal.options_flow = options.flow_score
+            signal.options_bias = options.bias
         if market_context:
             signal.market_regime = market_context.regime
             signal.market_regime_score = market_context.regime_score
@@ -60,6 +68,51 @@ class DecisionEngine:
             if swing_intelligence.trap_flags:
                 note += " | flags:" + ",".join(swing_intelligence.trap_flags)
             signal.warnings.append(note)
+        if supply_demand_result is not None:
+            sd = supply_demand_result
+            if sd.demand_zones or sd.supply_zones:
+                parts = [f"SUPDEM: {len(sd.demand_zones)}D/{len(sd.supply_zones)}S zones"]
+                if sd.nearest_demand:
+                    parts.append(f"nearest_demand={sd.nearest_demand.zone_low:.2f}-{sd.nearest_demand.zone_high:.2f}")
+                if sd.nearest_supply:
+                    parts.append(f"nearest_supply={sd.nearest_supply.zone_low:.2f}-{sd.nearest_supply.zone_high:.2f}")
+                if sd.dominant_zone_type:
+                    parts.append(f"dominant={sd.dominant_zone_type}")
+                signal.warnings.append(" | ".join(parts))
+            if sd.warnings:
+                signal.warnings.extend(sd.warnings)
+            if sd.missing_data:
+                signal.warnings.append(f"SUPDEM missing: {', '.join(sd.missing_data)}")
+        if options_flow_intelligence is not None:
+            of = options_flow_intelligence
+            parts = [f"OPTFLOW: quality={of.data_quality} freshness={of.freshness} bias={of.bias} flow_score={of.flow_score}"]
+            if of.chain_age_minutes is not None:
+                parts.append(f"age={of.chain_age_minutes}min")
+            if of.contract_candidate:
+                c = of.contract_candidate
+                parts.append(f"candidate={c.contract_symbol} strike={c.strike} mid={c.mid:.2f} iv={c.implied_volatility:.2f}")
+            signal.warnings.append(" | ".join(parts))
+            if of.warnings:
+                signal.warnings.extend(of.warnings)
+            if of.notes:
+                signal.warnings.extend(of.notes)
+        if strategy_result is not None:
+            st = strategy_result
+            parts = [f"STRATEGY: state={st.state} direction={st.direction or 'NONE'} confirm={st.confirmation} confidence={st.confidence}"]
+            if st.entry and st.entry.status != "UNAVAILABLE":
+                parts.append(f"entry={st.entry.entry_zone_low:.2f}-{st.entry.entry_zone_high:.2f} inv={st.entry.invalidation_price:.2f}")
+            if st.target and st.target.status != "UNAVAILABLE":
+                if st.target.tp1_low:
+                    parts.append(f"tp1={st.target.tp1_low:.2f}-{st.target.tp1_high:.2f}")
+                if st.target.tp2_low:
+                    parts.append(f"tp2={st.target.tp2_low:.2f}-{st.target.tp2_high:.2f}")
+            if st.risk and st.risk.invalidation_clear is not None:
+                parts.append(f"risk_clear={st.risk.invalidation_clear}")
+            signal.warnings.append(" | ".join(parts))
+            if st.warnings:
+                signal.warnings.extend(st.warnings)
+            if st.evidence and hasattr(st.evidence, 'missing') and st.evidence.missing:
+                signal.warnings.append(f"STRATEGY missing: {', '.join(st.evidence.missing)}")
         signal.target_result = target_result
         if target_result is not None:
             t = target_result
