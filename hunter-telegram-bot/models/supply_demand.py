@@ -64,6 +64,7 @@ class SupplyDemandZone:
     timeframe: Timeframe
     strength: ZoneStrength = ZoneStrength.UNKNOWN
     freshness: ZoneFreshness = ZoneFreshness.UNKNOWN
+    source: str = "unknown"               # provenance: yfinance_history / polygon / etc.
 
     # Core metrics
     base_low: Optional[float] = None

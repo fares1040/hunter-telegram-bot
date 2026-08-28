@@ -5,10 +5,11 @@ Separates observable chain data from inferred flow intelligence.
 All missing data remains UNKNOWN/UNAVAILABLE - never fabricated.
 """
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
-from dataclasses import field as dc_field
+
+from models.options import OptionContract, OptionsFlowProfile
 
 
 def _utc_now() -> datetime:
@@ -76,23 +77,20 @@ class OptionsFlowIntelligence:
     underlying_price: Optional[float] = None
 
     # Chain metrics
-    metrics: Optional['OptionChainMetrics'] = None
+    metrics: Optional[OptionChainMetrics] = None
 
     # Flow analysis
     bias: str = "NEUTRAL"
     flow_score: int = 0
     bias_confidence: int = 0
 
-    # Best contract candidate
-    contract_candidate: Optional['OptionContract'] = None
+    # Best contract candidate (single authoritative definition)
+    contract_candidate: Optional[OptionContract] = None
 
     # Freshness and quality
     freshness: str = "UNKNOWN"  # FRESH / STALE / UNKNOWN
     data_quality: str = "UNKNOWN"  # REAL / PROXY / MISSING / STALE / UNAVAILABLE
     chain_age_minutes: Optional[int] = None
-
-    # Best contract candidate
-    contract_candidate: Optional['OptionContract'] = None
 
     # Notes and warnings
     notes: List[str] = field(default_factory=list)
@@ -123,7 +121,7 @@ class OptionsFlowComponent:
 @dataclass
 class OptionsFlowScore:
     total: int = 0
-    components: List['OptionsFlowComponent'] = field(default_factory=list)
+    components: List[OptionsFlowComponent] = field(default_factory=list)
 
     @property
     def available_weight(self) -> float:
@@ -132,49 +130,3 @@ class OptionsFlowScore:
     @property
     def is_renormalized(self) -> bool:
         return self.available_weight > 0 and abs(self.available_weight - 1.0) > 1e-9
-
-
-class OptionsDataFreshness(Enum):
-    FRESH = "FRESH"
-    STALE = "STALE"
-    UNKNOWN = "UNKNOWN"
-
-
-@dataclass
-class OptionsFlowProfile:
-    call_volume: int = 0
-    put_volume: int = 0
-    call_open_interest: int = 0
-    put_open_interest: int = 0
-    call_premium: float = 0.0
-    put_premium: float = 0.0
-    put_call_volume_ratio: Optional[float] = None
-    put_call_premium_ratio: Optional[float] = None
-    flow_score: int = 50
-    bias: str = "NEUTRAL"
-    confidence: int = 0
-    contract_candidate: Optional['OptionContract'] = None
-    notes: List[str] = field(default_factory=list)
-    source: str = "none"
-    inferred: bool = False
-
-
-from models.options import OptionContract, OptionsSnapshot
-from models.technical import TechnicalIntelligence
-from models.intraday import IntradayIntelligence
-from models.swing import SwingIntelligence
-from models.target import TargetResult
-from models.risk import RiskPlan
-from engines.market_reaction_engine import ReactionMetrics
-from engines.liquidity_proxy import LiquidityProxyResult
-from models.risk import RiskPlan
-from models.ticker import TickerData
-from models.news import CatalystEvent
-from engines.market_reaction_engine import ReactionMetrics
-from engines.liquidity_proxy import LiquidityProxyResult
-from engines.technical_engine import TechnicalEngine
-from models.technical import TechnicalIntelligence
-from models.intraday import IntradayIntelligence
-from models.swing import SwingIntelligence
-from models.target import TargetResult
-from models.risk import RiskPlan

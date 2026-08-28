@@ -5,15 +5,13 @@ Separates observable chain data from inferred flow intelligence.
 All missing data remains UNKNOWN/UNAVAILABLE - never fabricated.
 """
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-from dataclasses import field
 
-from models.options import OptionContract, OptionsSnapshot
+from models.options import OptionContract, OptionsSnapshot, OptionsFlowProfile
 from models.options_flow import (
-    OptionsFlowIntelligence, OptionsFlowProfile, OptionsFlowScore,
-    OptionsFlowComponent, OptionChainMetrics, OptionsDataQuality,
-    OptionsFlowBias, OptionsDataFreshness
+    OptionsFlowIntelligence, OptionsFlowScore,
+    OptionsFlowComponent, OptionChainMetrics
 )
 from utils.logger import LOGGER
 
@@ -27,19 +25,6 @@ MIN_VOLUME_FOR_ANALYSIS = 100
 MIN_OI_FOR_ANALYSIS = 100
 UNUSUAL_VOLUME_MULTIPLE = 3.0
 UNUSUAL_OI_MULTIPLE = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
-STALE_CHAIN_MINUTES = 60
-MIN_VOLUME_FOR_ANALYSIS = 100
-MIN_OI_FOR_ANALYSIS = 100
-UNUSUAL_VOLUME_THRESHOLD = 3.0
-UNUSUAL_OI_THRESHOLD = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
-STALE_CHAIN_MINUTES = 60
-MIN_VOLUME_FOR_ANALYSIS = 100
-MIN_OI_FOR_ANALYSIS = 100
-UNUSUAL_VOLUME_THRESHOLD = 3.0
-UNUSUAL_OI_THRESHOLD = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
 STALE_CHAIN_MINUTES = 60
 
 
@@ -58,10 +43,10 @@ class OptionsFlowEngine:
 
     def build(
         self,
-        options_snapshot: Optional['OptionsSnapshot'],
+        options_snapshot: Optional[OptionsSnapshot],
         underlying_price: Optional[float],
         technical_intelligence=None,
-    ) -> 'OptionsFlowIntelligence':
+    ) -> OptionsFlowIntelligence:
         """Build options flow intelligence from real chain data."""
         result = OptionsFlowIntelligence()
         result.underlying_price = underlying_price
@@ -79,34 +64,28 @@ class OptionsFlowEngine:
         result.chain_timestamp = self._parse_timestamp(options_snapshot.timestamp) if hasattr(options_snapshot, 'timestamp') and options_snapshot.timestamp else None
         result.underlying_price = underlying_price or (options_snapshot.underlying_price if hasattr(options_snapshot, 'underlying_price') else None)
 
-        # Calculate chain age BEFORE checking contracts
+        # Calculate chain age
         if result.chain_timestamp:
             chain_age = (datetime.now(timezone.utc) - result.chain_timestamp).total_seconds() / 60
             result.chain_age_minutes = int(chain_age)
-            if chain_age > STALE_CHAIN_MINUTES:
-                result.freshness = "STALE"
-                result.warnings.append(f"Options chain is {int(chain_age)} minutes old (stale)")
-            elif chain_age > MAX_CHAIN_AGE_MINUTES:
+            if chain_age > MAX_CHAIN_AGE_MINUTES:
                 result.data_quality = "STALE"
                 result.warnings.append(f"Options chain is {int(chain_age)} minutes old (exceeds max age)")
+            elif chain_age > STALE_CHAIN_MINUTES:
+                result.freshness = "STALE"
+                result.warnings.append(f"Options chain is {int(chain_age)} minutes old (stale)")
             else:
                 result.freshness = "FRESH"
+        else:
+            result.chain_age_minutes = None
 
         # Check chain availability
         if not hasattr(options_snapshot, 'contracts') or not options_snapshot.contracts:
             result.data_quality = "MISSING"
             result.notes.append("No options chain available")
-            # Still analyze chain (will produce MISSING metrics)
             contracts = []
         else:
             contracts = options_snapshot.contracts if hasattr(options_snapshot, 'contracts') else []
-
-        # Set chain_age_minutes before analyzing (for stale chain detection)
-        if result.chain_timestamp:
-            chain_age = (datetime.now(timezone.utc) - result.chain_timestamp).total_seconds() / 60
-            result.chain_age_minutes = int(chain_age)
-        else:
-            result.chain_age_minutes = None
 
         # Build metrics from real chain data
         metrics = self._analyze_chain(contracts, underlying_price)
@@ -121,18 +100,9 @@ class OptionsFlowEngine:
         # Find contract candidate
         result.contract_candidate = self._find_best_contract(contracts, underlying_price)
 
-        # Pass the original result object to _finalize_intelligence to preserve all fields
-        result.ticker = "UNKNOWN"
-        result.metrics = metrics
-        result.bias = flow_profile.bias
-        result.flow_score = flow_profile.flow_score
-        result.bias_confidence = flow_profile.confidence
-        result.contract_candidate = result.contract_candidate
-        result.chain_source = options_snapshot.source if hasattr(options_snapshot, 'source') else "unknown"
-        # chain_timestamp and underlying_price are already set
         return self._finalize_intelligence(result)
 
-    def _analyze_chain(self, contracts: List, underlying_price: Optional[float]) -> 'OptionChainMetrics':
+    def _analyze_chain(self, contracts: List, underlying_price: Optional[float]) -> OptionChainMetrics:
         """Analyze real options chain for metrics."""
         metrics = OptionChainMetrics()
 
@@ -140,10 +110,6 @@ class OptionsFlowEngine:
             metrics.data_quality = "MISSING"
             metrics.missing_fields.append("no_contracts")
             return metrics
-
-        # Separate calls and puts
-        calls = [c for c in contracts if c.contract_type == "CALL"]
-        puts = [c for c in contracts if c.contract_type == "PUT"]
 
         # Volume metrics
         metrics.call_volume = sum(c.volume or 0 for c in contracts if c.contract_type == "CALL")
@@ -258,7 +224,6 @@ class OptionsFlowEngine:
             return OptionsFlowProfile(notes=["Options chain unavailable"], confidence=0, source="none")
 
         from engines.options_engine import OptionsEngine
-        from models.options import OptionsSnapshot
 
         engine = OptionsEngine()
         snapshot = OptionsSnapshot(
@@ -304,8 +269,9 @@ class OptionsFlowEngine:
 
         return best
 
-    def _finalize_intelligence(self, result: 'OptionsFlowIntelligence') -> 'OptionsFlowIntelligence':
-        # Determine data quality
+    def _finalize_intelligence(self, result: OptionsFlowIntelligence) -> OptionsFlowIntelligence:
+        """Finalize intelligence with data quality, bias, and freshness (single execution path)."""
+        # Determine data quality from metrics
         if result.metrics:
             result.data_quality = result.metrics.data_quality
         else:
@@ -319,84 +285,9 @@ class OptionsFlowEngine:
         else:
             result.bias = "NEUTRAL"
 
-        # Freshness
+        # Freshness from chain age
         if result.chain_age_minutes is not None:
-            if result.chain_age_minutes <= 5:
-                result.freshness = "FRESH"
-            elif result.chain_age_minutes <= STALE_CHAIN_MINUTES:
-                result.freshness = "STALE"
-            else:
-                result.freshness = "STALE"
-
-        # Final quality determination
-        if result.metrics and result.metrics.data_quality == "REAL":
-            result.data_quality = "REAL"
-        elif result.metrics:
-            result.data_quality = result.metrics.data_quality
-        else:
-            result.data_quality = "MISSING"
-
-        # Bias from flow score
-        if result.flow_score >= 70:
-            result.bias = "STRONG_CALL" if result.flow_score > 85 else "CALL_LEAN"
-        elif result.flow_score <= 30:
-            result.bias = "STRONG_PUT" if result.flow_score < 15 else "PUT_LEAN"
-        else:
-            result.bias = "NEUTRAL"
-
-        # Freshness
-        if result.chain_age_minutes is not None:
-            if result.chain_age_minutes <= 5:
-                result.freshness = "FRESH"
-            elif result.chain_age_minutes <= STALE_CHAIN_MINUTES:
-                result.freshness = "STALE"
-            else:
-                result.freshness = "STALE"
-
-        # Final quality determination
-        if result.metrics and result.metrics.data_quality == "REAL":
-            result.data_quality = "REAL"
-        elif result.metrics:
-            result.data_quality = result.metrics.data_quality
-        else:
-            result.data_quality = "MISSING"
-
-        # Bias from flow score
-        if result.flow_score >= 70:
-            result.bias = "STRONG_CALL" if result.flow_score > 85 else "CALL_LEAN"
-        elif result.flow_score <= 30:
-            result.bias = "STRONG_PUT" if result.flow_score < 15 else "PUT_LEAN"
-        else:
-            result.bias = "NEUTRAL"
-
-        # Freshness
-        if result.chain_age_minutes is not None:
-            if result.chain_age_minutes <= 5:
-                result.freshness = "FRESH"
-            elif result.chain_age_minutes <= STALE_CHAIN_MINUTES:
-                result.freshness = "STALE"
-            else:
-                result.freshness = "STALE"
-
-        # Final quality determination
-        if result.metrics and result.metrics.data_quality == "REAL":
-            result.data_quality = "REAL"
-        elif result.metrics:
-            result.data_quality = result.metrics.data_quality
-        else:
-            result.data_quality = "MISSING"
-
-        # Bias from flow score
-        if result.flow_score >= 70:
-            result.bias = "STRONG_CALL" if result.flow_score > 85 else "CALL_LEAN"
-        elif result.flow_score <= 30:
-            result.bias = "STRONG_PUT" if result.flow_score < 15 else "PUT_LEAN"
-        else:
-            result.bias = "NEUTRAL"
-
-        # Freshness
-        if result.chain_age_minutes is not None:
-            if result.chain_age_minutes <= 5:
+            if result.chain_age_minutes <= MIN_CHAIN_AGE_MINUTES:
                 result.freshness = "FRESH"
             elif result.chain_age_minutes <= STALE_CHAIN_MINUTES:
                 result.freshness = "STALE"
@@ -404,26 +295,3 @@ class OptionsFlowEngine:
                 result.freshness = "STALE"
 
         return result
-
-
-# Configuration constants
-MIN_CHAIN_AGE_MINUTES = 5
-MAX_CHAIN_AGE_MINUTES = 120
-MIN_VOLUME_FOR_ANALYSIS = 100
-MIN_OI_FOR_ANALYSIS = 100
-UNUSUAL_VOLUME_MULTIPLE = 3.0
-UNUSUAL_OI_MULTIPLE = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
-STALE_CHAIN_MINUTES = 60
-MIN_VOLUME_FOR_ANALYSIS = 100
-MIN_OI_FOR_ANALYSIS = 100
-UNUSUAL_VOLUME_THRESHOLD = 3.0
-UNUSUAL_OI_THRESHOLD = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
-STALE_CHAIN_MINUTES = 60
-MIN_VOLUME_FOR_ANALYSIS = 100
-MIN_OI_FOR_ANALYSIS = 100
-UNUSUAL_VOLUME_THRESHOLD = 3.0
-UNUSUAL_OI_THRESHOLD = 2.0
-MAX_CHAIN_AGE_MINUTES = 120
-STALE_CHAIN_MINUTES = 60

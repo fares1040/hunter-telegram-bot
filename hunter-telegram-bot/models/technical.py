@@ -128,6 +128,7 @@ class PriceLevel:
     strength: int                               # 0-100
     distance_pct: float                         # from current price, negative below
     evidence: str
+    source: str = "unknown"                     # provenance: swing_pivot / pd_highlow / vwap / etc.
 
 
 @dataclass

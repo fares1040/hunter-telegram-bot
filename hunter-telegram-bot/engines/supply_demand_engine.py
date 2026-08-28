@@ -13,10 +13,7 @@ import pandas as pd
 from models.ticker import TickerData
 from models.supply_demand import (
     SupplyDemandZone, ZoneType, ZoneFreshness, ZoneStrength, Timeframe,
-    ZoneCluster, ZoneEvidence, SupplyDemandResult,
-    ZoneStrength, Timeframe,
-    SupplyDemandResult, SupplyDemandZone, ZoneCluster, ZoneEvidence,
-    ZoneScoreComponent
+    ZoneCluster, ZoneEvidence, SupplyDemandResult, ZoneScoreComponent
 )
 from utils.logger import LOGGER
 
@@ -35,9 +32,7 @@ MIN_ZONE_HEIGHT_PCT = 0.2
 MAX_ZONE_HEIGHT_PCT = 5.0
 FRESHNESS_TESTED_THRESHOLD = 2
 FRESHNESS_WEAKENED_THRESHOLD = 4
-RETEST_TOLERANCE_PCT = 0.5
 STRONG_DEPARTURE_MULTIPLE = 2.0
-VOLUME_SPIKE_MULTIPLE = 1.5
 
 
 class SupplyDemandEngine:
@@ -626,7 +621,3 @@ class SupplyDemandEngine:
             return round(float(val), 4)
         except (TypeError, ValueError):
             return None
-
-
-import numpy as np
-from datetime import datetime, timezone
