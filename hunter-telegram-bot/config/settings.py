@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     discovery_cache_ttl: int = Field(default=180, ge=30, le=3600, alias="DISCOVERY_CACHE_TTL")
     discovery_min_abs_change: float = Field(default=3.0, ge=0.5, le=50.0, alias="DISCOVERY_MIN_ABS_CHANGE")
     discovery_max_candidates_per_source: int = Field(default=25, ge=1, le=100, alias="DISCOVERY_MAX_CANDIDATES_PER_SOURCE")
+    # Stage 2 — realtime (safe defaults: disabled unless explicitly enabled)
+    realtime_enabled: bool = Field(default=False, alias="REALTIME_ENABLED")
+    realtime_max_age_seconds: int = Field(default=30, ge=5, le=300, alias="REALTIME_MAX_AGE_SECONDS")
+    polygon_ws_enabled: bool = Field(default=False, alias="POLYGON_WS_ENABLED")
 
     @field_validator("log_level")
     @classmethod

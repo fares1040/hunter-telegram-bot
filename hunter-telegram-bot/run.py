@@ -46,7 +46,14 @@ from models.signal import HunterSignal, HunterDecision
 
 class HunterOrchestrator:
     def __init__(self):
-        self.market_provider: MarketDataProvider = PolygonProvider(SETTINGS.polygon_api_key) if SETTINGS.has_polygon else YFinanceProvider()
+        if SETTINGS.has_polygon:
+            try:
+                from providers.market_data.polygon_realtime_provider import PolygonRealtimeProvider
+                self.market_provider: MarketDataProvider = PolygonRealtimeProvider(SETTINGS.polygon_api_key)
+            except Exception:
+                self.market_provider: MarketDataProvider = PolygonProvider(SETTINGS.polygon_api_key)
+        else:
+            self.market_provider: MarketDataProvider = YFinanceProvider()
         self.options_provider = PolygonOptionsProvider(SETTINGS.polygon_api_key) if SETTINGS.has_polygon else YFinanceOptionsProvider()
         self.news_providers: List[NewsProvider] = ([FinnhubNewsProvider()] if SETTINGS.has_finnhub else []) + [YFinanceNewsProvider()]
         self.news_engine = NewsEngine(self.news_providers)
@@ -66,11 +73,40 @@ class HunterOrchestrator:
             data = await self.market_provider.fetch_ticker(ticker)
         except (ProviderError, DataInsufficientError) as e:
             return self._error_signal(ticker, str(e))
+        # Populate latency from intraday bars last timestamp if available
+        try:
+            if data.intraday_bars is not None and hasattr(data.intraday_bars, "index") and len(data.intraday_bars) > 0:
+                last_ts = data.intraday_bars.index[-1]
+                if hasattr(last_ts, "to_pydatetime"):
+                    last_dt = last_ts.to_pydatetime()
+                else:
+                    last_dt = last_ts
+                from datetime import timezone as _tz
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=_tz.utc)
+                now_utc = data.timestamp if data.timestamp and data.timestamp.tzinfo else __import__("datetime").datetime.now(_tz.utc)
+                if now_utc.tzinfo is None:
+                    now_utc = now_utc.replace(tzinfo=_tz.utc)
+                data.data_latency_ms = max(0, int((now_utc - last_dt).total_seconds() * 1000))
+        except Exception:
+            pass
         if not data.is_data_sufficient:
             return self._error_signal(ticker, "Insufficient market data")
         gate = self.candidate_gate.evaluate(data)
         if not gate.passed:
             return self._ignore_signal(ticker, "Candidate gate rejected: " + ", ".join(gate.reasons))
+        # Realtime quotes/trades (opt-in, never fabricate)
+        realtime_quotes: list = []
+        realtime_trades: list = []
+        if SETTINGS.realtime_enabled and getattr(self.market_provider, "supports_realtime_quotes", False):
+            try:
+                realtime_quotes = await self.market_provider.fetch_quotes(ticker, limit=5)  # type: ignore
+            except Exception:
+                realtime_quotes = []
+            try:
+                realtime_trades = await self.market_provider.fetch_trades(ticker, limit=10)  # type: ignore
+            except Exception:
+                realtime_trades = []
         history = await self._fetch_history(ticker)
         weekly_history = await self._fetch_weekly_history(ticker)
         monthly_history = await self._fetch_monthly_history(ticker)
@@ -82,8 +118,8 @@ class HunterOrchestrator:
             return self._ignore_signal(ticker, "No material events after filtering")
         catalyst_profile = self.catalyst_engine.enrich(events[0])
         event = await self.ai_analyzer.analyze_event(events[0])
-        reaction = self.reaction_engine.analyze(event, data)
-        liquidity = self.liquidity_engine.analyze(data)
+        reaction = self.reaction_engine.analyze(event, data, trades=realtime_trades, realtime_max_age_seconds=SETTINGS.realtime_max_age_seconds)
+        liquidity = self.liquidity_engine.analyze(data, quotes=realtime_quotes, trades=realtime_trades, realtime_max_age_seconds=SETTINGS.realtime_max_age_seconds)
         technical = self.technical_engine.analyze(data, history)
         options_snapshot = await self.options_provider.fetch_options(ticker, data.current_price) if SETTINGS.options_enabled else None
         context = await self.market_context_engine.analyze(ticker)
@@ -172,6 +208,14 @@ class HunterOrchestrator:
         return signal
 
     async def _fetch_history(self, ticker: str) -> Optional[pd.DataFrame]:
+        # Route through provider abstraction when available
+        try:
+            if hasattr(self.market_provider, "fetch_history"):
+                df = await self.market_provider.fetch_history(ticker, period="3mo", interval="1d")  # type: ignore
+                if df is not None and not df.empty:
+                    return df
+        except Exception:
+            pass
         try:
             import yfinance as yf
             return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="3mo", interval="1d"))
@@ -180,12 +224,26 @@ class HunterOrchestrator:
 
     async def _fetch_weekly_history(self, ticker: str) -> Optional[pd.DataFrame]:
         try:
+            if hasattr(self.market_provider, "fetch_history"):
+                df = await self.market_provider.fetch_history(ticker, period="2y", interval="1wk")  # type: ignore
+                if df is not None and not df.empty:
+                    return df
+        except Exception:
+            pass
+        try:
             import yfinance as yf
             return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="2y", interval="1wk"))
         except Exception as e:
             LOGGER.warning(f"[WeeklyHistory] Failed: {e}"); return None
 
     async def _fetch_monthly_history(self, ticker: str) -> Optional[pd.DataFrame]:
+        try:
+            if hasattr(self.market_provider, "fetch_history"):
+                df = await self.market_provider.fetch_history(ticker, period="max", interval="1mo")  # type: ignore
+                if df is not None and not df.empty:
+                    return df
+        except Exception:
+            pass
         try:
             import yfinance as yf
             return await asyncio.to_thread(lambda: yf.Ticker(ticker).history(period="max", interval="1mo"))

@@ -170,6 +170,20 @@ class YFinanceProvider(MarketDataProvider):
             timestamp_end=df.index[-1].to_pydatetime(),
         )
 
+    async def fetch_history(self, ticker: str, period: str = "3mo", interval: str = "1d"):
+        import yfinance as yf
+        loop = asyncio.get_event_loop()
+        async with get_yfinance_semaphore():
+            try:
+                stock = await asyncio.to_thread(yf.Ticker, ticker)
+                df = await loop.run_in_executor(None, lambda: stock.history(period=period, interval=interval))
+                if df is not None and not df.empty:
+                    df.index = df.index.tz_convert(SessionClock._tz) if hasattr(df.index, 'tz_convert') else df.index
+                    return df.sort_index()
+            except Exception as e:
+                LOGGER.warning(f"[yfinance] fetch_history failed for {ticker}: {e}")
+        return None
+
     async def health_check(self) -> bool:
         try:
             await self.fetch_ticker("SPY")

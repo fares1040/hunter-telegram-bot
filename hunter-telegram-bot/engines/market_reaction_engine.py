@@ -18,7 +18,7 @@ class ReactionMetrics:
     reaction_label: str="UNKNOWN"; reaction_score:int=0; data_sufficient:bool=False
 
 class MarketReactionEngine:
-    def analyze(self,event: CatalystEvent,ticker_data:TickerData)->ReactionMetrics:
+    def analyze(self,event: CatalystEvent,ticker_data:TickerData, trades: Optional[list]=None, realtime_max_age_seconds: int=30)->ReactionMetrics:
         m=ReactionMetrics()
         if not ticker_data.is_data_sufficient or not event.primary_source.published_at:
             m.reaction_label="DATA_INSUFFICIENT"; return m
@@ -54,6 +54,13 @@ class MarketReactionEngine:
         vwap=self._vwap_at_or_before(bars,news)
         if vwap:
             m.vwap_at_news=round(vwap,4); m.price_vs_vwap_pct=round((m.price_after-vwap)/vwap*100,2)
+        # Additive realtime trade evidence (fresh only, never overrides bar-based score upward when stale)
+        if trades:
+            fresh = [t for t in trades if t.freshness(realtime_max_age_seconds)=="FRESH" and t.is_valid]
+            if fresh:
+                # Realtime trade volume in the 5m window worth a small confirmation (capped)
+                pass  # Keep bar score authoritative; freshness already validated. Future stage may refine.
+
         # Need both price reaction and comparable volume to call the reaction strong.
         m.reaction_score=self._score(m)
         m.reaction_label=self._label(m.reaction_score)

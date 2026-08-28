@@ -23,7 +23,7 @@ class LiquidityProxyResult:
 
 
 class LiquidityProxyEngine:
-    def analyze(self, data: TickerData) -> LiquidityProxyResult:
+    def analyze(self, data: TickerData, quotes: Optional[list] = None, trades: Optional[list] = None, realtime_max_age_seconds: int = 30) -> LiquidityProxyResult:
         result = LiquidityProxyResult()
 
         rvol = data.relative_volume
@@ -75,6 +75,22 @@ class LiquidityProxyEngine:
         else:
             score -= 10
             result.notes += "Dollar volume unavailable. "
+
+        # Additive realtime evidence (stale/missing never increases conviction)
+        fresh_trades = [t for t in (trades or []) if t.freshness(realtime_max_age_seconds) == "FRESH"] if trades else []
+        fresh_quotes = [q for q in (quotes or []) if q.freshness(realtime_max_age_seconds) == "FRESH"] if quotes else []
+        if fresh_trades:
+            # Recent trade activity adds a small boost (capped)
+            score = min(100, score + min(5, len(fresh_trades)))
+            result.notes += f"Realtime trades: {len(fresh_trades)} fresh. "
+        if fresh_quotes:
+            valid = [q for q in fresh_quotes if q.is_valid]
+            if valid:
+                spreads = [q.spread_pct for q in valid if q.spread_pct is not None]
+                if spreads:
+                    avg_spread = sum(spreads) / len(spreads)
+                    if avg_spread is not None and avg_spread <= 0.5:
+                        result.notes += f"Tight spread {avg_spread:.2f}% (realtime). "
 
         result.score = max(0, min(100, score))
 
