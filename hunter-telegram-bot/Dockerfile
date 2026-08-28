@@ -9,6 +9,4 @@ COPY . .
 
 RUN mkdir -p data && chmod 755 data
 
-EXPOSE 0
-
 CMD ["python3", "run.py"]
