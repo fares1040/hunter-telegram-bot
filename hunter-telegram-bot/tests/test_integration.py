@@ -691,6 +691,88 @@ class TestStartupConfiguration:
             settings_module.SETTINGS = original_settings
 
 
+class TestConfigurationContract:
+    """Configuration Contract tests — .env.example completeness and Stage 2 safety."""
+
+    def test_env_example_covers_all_settings_aliases(self):
+        """.env.example must contain every Settings alias."""
+        import re
+        with open("config/settings.py") as f:
+            src = f.read()
+        aliases = set(m.group(1) for m in re.finditer(r'alias\s*=\s*["\']([^"\']+)["\']', src))
+        with open(".env.example") as f:
+            env_src = f.read()
+        env_vars = set()
+        for line in env_src.splitlines():
+            line = line.strip()
+            if "=" in line and not line.startswith("#"):
+                var = line.split("=")[0].strip()
+                if var:
+                    env_vars.add(var)
+        missing = aliases - env_vars
+        assert not missing, f"Missing in .env.example: {sorted(missing)}"
+
+    def test_stage2_defaults_disabled(self):
+        """Stage 2 realtime settings are disabled by default."""
+        from config.settings import Settings
+        s = Settings(_env_file=None)
+        assert s.realtime_enabled is False
+        assert s.polygon_ws_enabled is False
+        assert s.options_flow_realtime_enabled is False
+        assert s.realtime_max_age_seconds == 30
+        assert s.options_flow_realtime_max_age_seconds == 30
+        assert 5 <= s.realtime_max_age_seconds <= 300
+        assert 5 <= s.options_flow_realtime_max_age_seconds <= 300
+
+    def test_placeholder_secrets_rejected_in_production(self):
+        """Placeholder secrets in .env.example values are rejected by validate_production."""
+        from config.settings import Settings, PRODUCTION_INVALID_TELEGRAM
+        from core.exceptions import ConfigurationError
+        for placeholder in PRODUCTION_INVALID_TELEGRAM:
+            if placeholder == "":
+                continue
+            s = Settings(_env_file=None, telegram_bot_token=placeholder, telegram_chat_id="123456")
+            with pytest.raises(ConfigurationError):
+                s.validate_production()
+
+    def test_no_secrets_in_env_example_values(self):
+        """.env.example contains no real secret values (no tokens, keys, or private data)."""
+        import re
+        with open(".env.example") as f:
+            content = f.read()
+        for line in content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "=" not in stripped:
+                continue
+            _, _, value = stripped.partition("=")
+            value = value.strip()
+            assert len(value) < 100, f"Suspiciously long value for {stripped.split('=')[0]}"
+            assert not value.startswith("sk-"), f"Possible secret in .env.example: {stripped.split('=')[0]}"
+            assert not re.match(r'^[A-Z0-9]{20,}$', value), f"Possible secret token in .env.example: {stripped.split('=')[0]}"
+
+    def test_has_polygon_false_without_key(self):
+        """has_polygon is False when no Polygon key configured."""
+        from config.settings import Settings
+        s = Settings(_env_file=None, polygon_api_key=None)
+        assert s.has_polygon is False
+
+    def test_has_finnhub_false_without_key(self):
+        """has_finnhub is False when no Finnhub key configured."""
+        from config.settings import Settings
+        s = Settings(_env_file=None, finnhub_api_key=None)
+        assert s.has_finnhub is False
+
+    def test_whitespace_token_rejected(self):
+        """Whitespace-only token → ConfigurationError."""
+        from config.settings import Settings
+        from core.exceptions import ConfigurationError
+        s = Settings(_env_file=None, telegram_bot_token="   ", telegram_chat_id="111111")
+        with pytest.raises(ConfigurationError):
+            s.validate_production()
+
+
 class TestAnchorSafety:
     """Historical analysis must not read candles after the requested anchor."""
 
