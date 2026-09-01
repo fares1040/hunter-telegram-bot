@@ -21,7 +21,7 @@ class DecisionEngine:
     def __init__(self):
         self.scorer = CompositeScoringEngine()
 
-    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None, target_result=None, supply_demand_result=None, options_flow_intelligence=None, strategy_result=None):
+    def decide(self, ticker_data, event, reaction, liquidity, technical, confidence_report, options=None, risk_plan=None, trap_risk=0, trap_warnings=None, market_context=None, technical_intelligence=None, intraday_intelligence=None, swing_intelligence=None, target_result=None, supply_demand_result=None, options_flow_intelligence=None, strategy_result=None, fresh_realtime: bool = False, has_true_flow: bool = False):
         options = options or OptionsFlowProfile()
         risk_plan = risk_plan or RiskPlan(valid=True, confidence=70)
         trap_warnings = trap_warnings or []
@@ -153,7 +153,6 @@ class DecisionEngine:
             # derive realtime freshness
             catalyst_ts = getattr(event.primary_source, "published_at", None) if hasattr(event, "primary_source") else None
             reaction_ts = getattr(reaction, "reaction_timestamp", None)
-            fresh_realtime = False
             why = WhyNowBuilder.build(catalyst_ts, reaction_ts, reaction.reaction_label, fresh_realtime)
             realtime_bullish = reaction.reaction_label in ("STRONG_POSITIVE_REACTION","POSITIVE_REACTION")
             options_bullish = "CALL" in signal.options_bias
@@ -177,6 +176,10 @@ class DecisionEngine:
             conviction = ConvictionEngine.build(alignment, quality, freshness, completeness, conflicts)
             quality_obj = OpportunityQualityEngine.build(conviction, reaction.reaction_score, liquidity.score, risk_plan.valid, trap_risk, signal.market_regime, not stale_critical)
             supporting = [DecisionEvidence(name="catalyst", direction="BULLISH" if event.sentiment in ("POSITIVE","VERY_POSITIVE") else "UNKNOWN", quality="REAL" if catalyst_ts else "UNKNOWN", source="catalyst", description=str(event.catalyst_type.value if hasattr(event.catalyst_type,'value') else event.catalyst_type))]
+            if fresh_realtime:
+                supporting.append(DecisionEvidence(name="realtime", direction="BULLISH" if realtime_bullish else "UNKNOWN", quality="REAL", source="polygon_realtime_quote", freshness="FRESH", description="fresh realtime quote/trade"))
+            if has_true_flow:
+                supporting.append(DecisionEvidence(name="true_flow", direction="BULLISH" if options_bullish else "UNKNOWN", quality="REAL", source="polygon_options_realtime_trade", freshness="FRESH", description="fresh true option flow"))
             risks = list(trap_warnings)[:5]
             signal.decision2 = build_rationale(supporting, conflicts, risks, why, conviction, quality_obj)
         except Exception:

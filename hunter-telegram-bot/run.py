@@ -220,6 +220,8 @@ class HunterOrchestrator:
             options_intelligence=options_flow,
         )
 
+        fresh_realtime = any(q.freshness(SETTINGS.realtime_max_age_seconds) == "FRESH" for q in realtime_quotes) or any(t.freshness(SETTINGS.realtime_max_age_seconds) == "FRESH" for t in realtime_trades)
+        has_true_flow = any(t.freshness(SETTINGS.options_flow_realtime_max_age_seconds) == "FRESH" for t in true_option_trades) if true_option_trades else False
         signal = self.decision_engine.decide(
             data, event, reaction, liquidity, technical, confidence, options, risk,
             trap_risk, trap_warnings,
@@ -231,6 +233,8 @@ class HunterOrchestrator:
             supply_demand_result=supply_demand_result,
             options_flow_intelligence=options_flow,
             strategy_result=strategy_result,
+            fresh_realtime=fresh_realtime,
+            has_true_flow=has_true_flow,
         )
         key = f"{ticker}:{event.event_id}"
         if signal.decision == HunterDecision.HUNT_NOW and not self.memory.seen(key):
