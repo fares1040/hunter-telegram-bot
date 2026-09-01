@@ -117,69 +117,6 @@ class HunterOrchestrator:
         if not data.is_data_sufficient:
             return self._error_signal(ticker, "Insufficient market data")
 
-    async def _enhance_with_realtime(self, data, ticker: str):
-        """Supplement incomplete REST session data with realtime quotes/trades.
-
-        Uses WebSocket realtime data (preferred) or REST polling (fallback) to populate
-        missing session snapshots when REST data doesn't include current-session bars.
-        """
-        if not SETTINGS.realtime_enabled:
-            return data
-
-        # Check if session data is already complete
-        if data.is_data_sufficient:
-            return data
-
-        # Try WebSocket realtime manager first
-        realtime_quotes = []
-        realtime_trades = []
-
-        if self.realtime_manager and SETTINGS.polygon_ws_enabled:
-            max_age = SETTINGS.realtime_max_age_seconds
-            realtime_quotes = self.realtime_manager.get_fresh_quotes(ticker, SETTINGS.realtime_max_age_seconds)
-            realtime_trades = self.realtime_manager.get_fresh_trades(ticker, SETTINGS.realtime_max_age_seconds)
-
-        # Fallback to REST polling if WebSocket not available or no data
-        if SETTINGS.realtime_enabled and getattr(self.market_provider, "supports_realtime_quotes", False) and (not realtime_quotes and not realtime_trades):
-            try:
-                realtime_quotes = await self.market_provider.fetch_quotes(ticker, limit=5)
-            except Exception:
-                realtime_quotes = []
-            try:
-                realtime_trades = await self.market_provider.fetch_trades(ticker, limit=10)
-            except Exception:
-                realtime_trades = []
-
-        if not realtime_quotes and not realtime_trades:
-            return data  # No fresh realtime data available
-
-        # Try to build session snapshots from realtime trades
-        from models.session import SessionSnapshot
-        from core.session_clock import MarketSession
-
-        # Use realtime trades to build session snapshots
-        premarket, regular, after_hours = self.realtime_manager.build_session_snapshots_from_realtime(
-            ticker,
-            data.current_price or 0,
-            data.previous_close or 0
-        ) if self.realtime_manager else (None, None, None)
-
-        # Only overwrite incomplete session snapshots with realtime data
-        if not data.premarket.is_complete and premarket is not None:
-            data.premarket = premarket
-        if not data.regular.is_complete and regular is not None:
-            data.regular = regular
-        if not data.after_hours.is_complete and after_hours is not None:
-            data.after_hours = after_hours
-
-        # If we now have current_price from realtime but not in data, update it
-        if data.current_price is None:
-            latest_quote = self.realtime_manager.get_latest_quote(ticker) if self.realtime_manager else None
-            if latest_quote and latest_quote.mid:
-                data.current_price = latest_quote.mid
-
-        return data
-
         gate = self.candidate_gate.evaluate(data)
         if not gate.passed:
             return self._ignore_signal(ticker, "Candidate gate rejected: " + ", ".join(gate.reasons))
@@ -301,6 +238,69 @@ class HunterOrchestrator:
             try: await self.notifier.send_signal(signal)
             except Exception as e: LOGGER.error(f"[Pipeline] Telegram failed: {e}")
         return signal
+
+    async def _enhance_with_realtime(self, data, ticker: str):
+        """Supplement incomplete REST session data with realtime quotes/trades.
+
+        Uses WebSocket realtime data (preferred) or REST polling (fallback) to populate
+        missing session snapshots when REST data doesn't include current-session bars.
+        """
+        if not SETTINGS.realtime_enabled:
+            return data
+
+        # Check if session data is already complete
+        if data.is_data_sufficient:
+            return data
+
+        # Try WebSocket realtime manager first
+        realtime_quotes = []
+        realtime_trades = []
+
+        if self.realtime_manager and SETTINGS.polygon_ws_enabled:
+            max_age = SETTINGS.realtime_max_age_seconds
+            realtime_quotes = self.realtime_manager.get_fresh_quotes(ticker, SETTINGS.realtime_max_age_seconds)
+            realtime_trades = self.realtime_manager.get_fresh_trades(ticker, SETTINGS.realtime_max_age_seconds)
+
+        # Fallback to REST polling if WebSocket not available or no data
+        if SETTINGS.realtime_enabled and getattr(self.market_provider, "supports_realtime_quotes", False) and (not realtime_quotes and not realtime_trades):
+            try:
+                realtime_quotes = await self.market_provider.fetch_quotes(ticker, limit=5)
+            except Exception:
+                realtime_quotes = []
+            try:
+                realtime_trades = await self.market_provider.fetch_trades(ticker, limit=10)
+            except Exception:
+                realtime_trades = []
+
+        if not realtime_quotes and not realtime_trades:
+            return data  # No fresh realtime data available
+
+        # Try to build session snapshots from realtime trades
+        from models.session import SessionSnapshot
+        from core.session_clock import MarketSession
+
+        # Use realtime trades to build session snapshots
+        premarket, regular, after_hours = self.realtime_manager.build_session_snapshots_from_realtime(
+            ticker,
+            data.current_price or 0,
+            data.previous_close or 0
+        ) if self.realtime_manager else (None, None, None)
+
+        # Only overwrite incomplete session snapshots with realtime data
+        if not data.premarket.is_complete and premarket is not None:
+            data.premarket = premarket
+        if not data.regular.is_complete and regular is not None:
+            data.regular = regular
+        if not data.after_hours.is_complete and after_hours is not None:
+            data.after_hours = after_hours
+
+        # If we now have current_price from realtime but not in data, update it
+        if data.current_price is None:
+            latest_quote = self.realtime_manager.get_latest_quote(ticker) if self.realtime_manager else None
+            if latest_quote and latest_quote.mid:
+                data.current_price = latest_quote.mid
+
+        return data
 
     async def _fetch_history(self, ticker: str) -> Optional[pd.DataFrame]:
         # Route through provider abstraction when available
