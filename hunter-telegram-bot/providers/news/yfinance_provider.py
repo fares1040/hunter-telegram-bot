@@ -77,7 +77,7 @@ class YFinanceNewsProvider(NewsProvider):
             item = self._map_item(ticker, raw)
             if item is None:
                 continue
-            if item.published_at is not None and item.published_at < since:
+            if item.published_at is not None and ensure_utc(item.published_at) < since:
                 continue
             items.append(item)
         return items

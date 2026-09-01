@@ -8,6 +8,8 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 
+from models.news import ensure_utc
+
 from models.options import OptionContract, OptionsSnapshot, OptionsFlowProfile
 from models.options_flow import (
     OptionsFlowIntelligence, OptionsFlowScore,
@@ -37,7 +39,7 @@ class OptionsFlowEngine:
     def _parse_timestamp(self, timestamp_str: str) -> Optional[datetime]:
         """Parse ISO format timestamp string to datetime."""
         try:
-            return datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+            return ensure_utc(datetime.fromisoformat(timestamp_str.replace('Z', '+00:00')))
         except Exception:
             return None
 
@@ -68,7 +70,7 @@ class OptionsFlowEngine:
 
         # Calculate chain age
         if result.chain_timestamp:
-            chain_age = (datetime.now(timezone.utc) - result.chain_timestamp).total_seconds() / 60
+            chain_age = (datetime.now(timezone.utc) - ensure_utc(result.chain_timestamp)).total_seconds() / 60
             result.chain_age_minutes = int(chain_age)
             if chain_age > MAX_CHAIN_AGE_MINUTES:
                 result.data_quality = "STALE"
