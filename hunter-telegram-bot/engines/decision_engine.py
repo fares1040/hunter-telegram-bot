@@ -223,6 +223,9 @@ class DecisionEngine:
         elif event.impact_score >= 60 and event.sentiment in {"POSITIVE", "VERY_POSITIVE"}:
             signal.decision = HunterDecision.WATCH
             signal.reasoning = "Material positive catalyst; confirmation still required"
+        elif event.impact_score >= 55 and event.sentiment in {"POSITIVE", "VERY_POSITIVE"} and reaction.reaction_score >= 55 and liquidity.score >= 55 and technical.setup_score >= 55 and trap_risk < 60 and not stale_critical and not unknown_critical and getattr(signal, "market_regime", "UNKNOWN") != "RISK_OFF":
+            signal.decision = HunterDecision.WATCH
+            signal.reasoning = "Borderline confluence: supportive reaction/liquidity/structure with material catalyst"
         else:
             signal.reasoning = "Did not meet HUNT_NOW or WATCH gates"
         LOGGER.info(f"[Decision] {ticker_data.ticker} {signal.decision.value} score={signal.hunter_score}")
