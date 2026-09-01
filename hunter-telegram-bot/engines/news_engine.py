@@ -142,6 +142,11 @@ class NewsEngine:
                 LOGGER.info(f"[NewsEngine] Rejected {event.event_id}: low tier score ({event.source_tier_score})")
                 continue
             if not event.is_fresh(max_age_minutes=180):
+                # Tier-1 contextual window up to 240m: keep as contextual evidence for WATCH, not fresh for HUNT
+                if event.best_tier == SourceTier.TIER_1_OFFICIAL and event.is_fresh(max_age_minutes=240):
+                    # keep tier-1 stale as contextual (freshness will remain STALE, WhyNow stays UNKNOWN/PARTIAL)
+                    filtered.append(event)
+                    continue
                 LOGGER.info(f"[NewsEngine] Rejected {event.event_id}: stale")
                 continue
             filtered.append(event)

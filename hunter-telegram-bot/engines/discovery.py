@@ -177,3 +177,11 @@ class DiscoveryEngine:
         cand.score_breakdown = breakdown
         cand.missing_fields = sorted(missing)
         cand.discovery_score = int(sum(breakdown.values()))
+        # Quality prioritization: deprioritize noisy micro-caps without hard rejection
+        # price and volume are real fields; low price alone does not force IGNORE
+        price = cand.price
+        if price is not None and volume is not None:
+            if price < 2.0 and volume < 500_000:
+                cand.discovery_score = max(0, cand.discovery_score - 10)
+            elif price < 5.0 and volume < 300_000:
+                cand.discovery_score = max(0, cand.discovery_score - 8)
