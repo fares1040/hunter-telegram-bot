@@ -65,7 +65,7 @@ class ConvictionEngine:
 
 class OpportunityQualityEngine:
     @staticmethod
-    def build(conviction: Conviction, reaction_score: int, liquidity_score: int, risk_valid: bool, trap_risk: int, market_regime: str, freshness_ok: bool) -> OpportunityQuality:
+    def build(conviction: Conviction, reaction_score: int, liquidity_score: int, risk_valid: bool, trap_risk: int, market_regime: str, freshness_ok: bool, swing_intelligence=None, target_result=None, supply_demand_result=None) -> OpportunityQuality:
         if not risk_valid:
             return OpportunityQuality(score=0, tier="UNAVAILABLE", risk_valid=False, trap_risk=trap_risk, rationale="risk invalid")
         if trap_risk >= 60:
@@ -75,12 +75,24 @@ class OpportunityQualityEngine:
             base = max(0, base - 20)
         if market_regime=="RISK_OFF":
             base = max(0, base - 15)
+        # Stage 7 confluence: swing CONFIRMED/ready + target RR>=2 + DEMAND dominant improves completeness, bounded +10, only when all proven
+        confluence = False
+        try:
+            swing_ok = swing_intelligence is not None and getattr(swing_intelligence.entry, "status", None) == "READY" and any(s.quality in ("CONFIRMED","WATCH") and s.detected for s in getattr(swing_intelligence, "setups", []))
+            target_ok = target_result is not None and getattr(target_result, "status", None) in ("READY","VALID") and (getattr(target_result, "risk_reward", 0) or 0) >= 2
+            supply_ok = supply_demand_result is not None and getattr(supply_demand_result, "dominant_zone_type", None) == "DEMAND"
+            if swing_ok and target_ok and supply_ok and risk_valid and trap_risk < 60:
+                confluence = True
+                base = min(100, base + 10)
+        except Exception:
+            pass
         risk_adj = max(0, min(100, base))
         if risk_adj >= 75 and conviction.level=="HIGH": tier="HIGH_QUALITY"
         elif risk_adj >= 55: tier="ACTIONABLE"
         elif risk_adj >= 35: tier="INTERESTING"
         else: tier="LOW_QUALITY"
-        return OpportunityQuality(score=risk_adj, tier=tier, risk_adjusted_score=risk_adj, risk_valid=True, trap_risk=trap_risk, rationale=f"base {base}")
+        rationale = f"base {base}" + (" +confluence" if confluence else "")
+        return OpportunityQuality(score=risk_adj, tier=tier, risk_adjusted_score=risk_adj, risk_valid=True, trap_risk=trap_risk, rationale=rationale)
 
 def build_rationale(supporting: List[DecisionEvidence], conflicts: List[Conflict], risks: List[str], why_now: WhyNow, conviction: Conviction, quality: OpportunityQuality) -> DecisionRationale:
     summary = f"{why_now.status} why_now; conviction {conviction.level} ({conviction.score}); quality {quality.tier}; {len(conflicts)} conflicts"

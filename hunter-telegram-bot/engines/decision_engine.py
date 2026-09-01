@@ -173,8 +173,12 @@ class DecisionEngine:
             else:
                 freshness = 80 if catalyst_fresh=="FRESH" and reaction_fresh=="FRESH" else 50
             completeness = 70 if signal.data_confidence >= 70 and not unknown_critical else 40
+            # Stage 7 completeness boost from swing/target/supply confluence handled inside OpportunityQualityEngine
+            if swing_intelligence is not None and target_result is not None and supply_demand_result is not None:
+                # completeness already derived, but confluence validated inside OpportunityQuality
+                pass
             conviction = ConvictionEngine.build(alignment, quality, freshness, completeness, conflicts)
-            quality_obj = OpportunityQualityEngine.build(conviction, reaction.reaction_score, liquidity.score, risk_plan.valid, trap_risk, signal.market_regime, not stale_critical)
+            quality_obj = OpportunityQualityEngine.build(conviction, reaction.reaction_score, liquidity.score, risk_plan.valid, trap_risk, signal.market_regime, not stale_critical, swing_intelligence=swing_intelligence, target_result=target_result, supply_demand_result=supply_demand_result)
             supporting = [DecisionEvidence(name="catalyst", direction="BULLISH" if event.sentiment in ("POSITIVE","VERY_POSITIVE") else "UNKNOWN", quality="REAL" if catalyst_ts else "UNKNOWN", source="catalyst", description=str(event.catalyst_type.value if hasattr(event.catalyst_type,'value') else event.catalyst_type))]
             if fresh_realtime:
                 supporting.append(DecisionEvidence(name="realtime", direction="BULLISH" if realtime_bullish else "UNKNOWN", quality="REAL", source="polygon_realtime_quote", freshness="FRESH", description="fresh realtime quote/trade"))
