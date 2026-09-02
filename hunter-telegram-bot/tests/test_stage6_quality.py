@@ -36,9 +36,16 @@ def test_no_fabricated_negative():
     res=gate.evaluate(data)
     assert res.passed
 
+def _anchor():
+    try:
+        from tests.test_integration import TEST_NEWS_TIME
+        return TEST_NEWS_TIME
+    except Exception:
+        return datetime.now(timezone.utc)
+
 def test_tier1_contextual_240():
     eng=NewsEngine([])
-    now=datetime.now(timezone.utc)
+    now=_anchor()
     src1=NewsItem(id="1", ticker="T", headline="t", source="Reuters", source_tier=SourceTier.TIER_1_OFFICIAL, published_at=now-timedelta(minutes=200))
     ev=CatalystEvent(event_id="e1", ticker="T", catalyst_type=CatalystType.OTHER, headline_summary="t", primary_source=src1)
     ev.source_tier_score=100
@@ -49,7 +56,7 @@ def test_tier1_contextual_240():
 
 def test_tier1_over_240_filtered():
     eng=NewsEngine([])
-    now=datetime.now(timezone.utc)
+    now=_anchor()
     src=NewsItem(id="1", ticker="T", headline="t", source="Reuters", source_tier=SourceTier.TIER_1_OFFICIAL, published_at=now-timedelta(minutes=250))
     ev=CatalystEvent(event_id="e1", ticker="T", catalyst_type=CatalystType.OTHER, headline_summary="t", primary_source=src)
     ev.source_tier_score=100
@@ -57,14 +64,14 @@ def test_tier1_over_240_filtered():
 
 def test_lowtier_stale_filtered():
     eng=NewsEngine([])
-    now=datetime.now(timezone.utc)
+    now=_anchor()
     src=NewsItem(id="1", ticker="T", headline="t", source="Reuters", source_tier=SourceTier.TIER_3_FINANCIAL, published_at=now-timedelta(minutes=200))
     ev=CatalystEvent(event_id="e1", ticker="T", catalyst_type=CatalystType.OTHER, headline_summary="t", primary_source=src)
     ev.source_tier_score=60
     assert len(eng.filter_material_events([ev]))==0
 
 def test_stale_never_confirmed():
-    src=NewsItem(id="1", ticker="T", headline="t", source="Reuters", source_tier=SourceTier.TIER_1_OFFICIAL, published_at=datetime.now(timezone.utc)-timedelta(minutes=200))
+    src=NewsItem(id="1", ticker="T", headline="t", source="Reuters", source_tier=SourceTier.TIER_1_OFFICIAL, published_at=_anchor()-timedelta(minutes=200))
     ev=CatalystEvent(event_id="e1", ticker="T", catalyst_type=CatalystType.OTHER, headline_summary="t", primary_source=src)
     ev.source_tier_score=100
     # is_fresh 120 false, so WhyNow should be UNKNOWN
