@@ -173,6 +173,20 @@ class DiscoveryEngine:
         extra_sources = max(0, len(set(cand.sources)) - 1)
         breakdown["corroboration"] = min(extra_sources * 5, SCORE_WEIGHTS["corroboration"])
         breakdown["watchlist"] = SCORE_WEIGHTS["watchlist"] if from_watchlist else 0
+        # Adaptive Hunt (Stage 6): bounded additive adjustment from Track Record, cached per-scan
+        breakdown["adaptive"] = 0
+        try:
+            from core.adaptive import adjustment_for
+            from core.memory import SignalMemory
+            # Use default memory path; if DB missing or insufficient history, adjustment stays 0
+            mem = SignalMemory()
+            # Discovery has no Swing setup yet, so we check UNKNOWN/setup-agnostic: overall not per-candidate setup
+            # For determinism, use UNKNOWN bucket which covers no-setup candidates
+            adj = adjustment_for("UNKNOWN", mem)
+            # Also try candidate-specific if it had setup hint (future)
+            breakdown["adaptive"] = max(-5, min(5, adj))
+        except Exception:
+            breakdown["adaptive"] = 0
 
         cand.score_breakdown = breakdown
         cand.missing_fields = sorted(missing)
@@ -185,3 +199,6 @@ class DiscoveryEngine:
                 cand.discovery_score = max(0, cand.discovery_score - 10)
             elif price < 5.0 and volume < 300_000:
                 cand.discovery_score = max(0, cand.discovery_score - 8)
+        # apply adaptive bounded adjustment additively
+        if breakdown.get("adaptive"):
+            cand.discovery_score = max(0, min(100, cand.discovery_score + breakdown["adaptive"]))
