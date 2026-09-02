@@ -241,6 +241,12 @@ class HunterOrchestrator:
             self.memory.remember(key, ticker, signal.decision.value, signal.hunter_score)
             try: await self.notifier.send_signal(signal)
             except Exception as e: LOGGER.error(f"[Pipeline] Telegram failed: {e}")
+        # Track Record (additive, never fabricates outcome)
+        try:
+            if signal.decision in (HunterDecision.HUNT_NOW, HunterDecision.WATCH):
+                self.memory.create_signal(signal)
+        except Exception as e:
+            LOGGER.warning(f"[TrackRecord] create failed: {e}")
         return signal
 
     async def _enhance_with_realtime(self, data, ticker: str):
